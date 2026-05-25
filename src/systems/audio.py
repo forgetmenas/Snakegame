@@ -12,9 +12,9 @@ class AudioManager:
 
     def __init__(self):
         self.sounds = {}
-        self._load("eat", "eat.wav")
-        self._load("death", "death.wav")
-        self._load("guide", "guide.wav")
+        self._load("eat", "assets/eat.wav")
+        self._load("death", "assets/death.wav")
+        self._load("guide", "assets/guide.wav")
 
     def _load(self, key, filename):
         """尝试加载 WAV 文件，失败则设为 None"""

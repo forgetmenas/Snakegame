@@ -9,13 +9,13 @@ import sys
 import math
 import random
 
-from settings import *
-from camera import Camera
-from snake import Snake
-from fog import FogOfWar
-from input_handler import InputHandler
-from world import World
-from audio import AudioManager
+from src.core.settings import *
+from src.systems.camera import Camera
+from src.entities.snake import Snake
+from src.systems.fog import FogOfWar
+from src.systems.input_handler import InputHandler
+from src.entities.world import World
+from src.systems.audio import AudioManager
 
 
 # =========================================================================

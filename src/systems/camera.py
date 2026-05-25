@@ -1,6 +1,6 @@
 """相机系统 - 平滑跟随蛇头，提供世界坐标到屏幕坐标的转换"""
 
-from settings import *
+from src.core.settings import *
 
 
 class Camera:

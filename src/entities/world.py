@@ -6,7 +6,7 @@
 import math
 import random
 import pygame
-from settings import *
+from src.core.settings import *
 
 
 # =========================================================================

@@ -10,7 +10,7 @@ light_surface 白色处场景完全可见，深色处被压暗形成迷雾。
 """
 
 import pygame
-from settings import *
+from src.core.settings import *
 
 
 class FogOfWar:

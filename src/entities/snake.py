@@ -6,7 +6,7 @@
 """
 
 import math
-from settings import *
+from src.core.settings import *
 
 
 class Snake:
