@@ -95,6 +95,7 @@ class SkillCard:
     tile_y: int
     kind: str
     color: tuple[int, int, int]
+    ring_color: tuple[int, int, int]
     sprite_path: str
 
     @property
@@ -272,7 +273,7 @@ class World:
             kind = random.choice(missing or all_kinds)
             cfg = SKILL_TYPES[kind]
             self.skill_cards.append(
-                SkillCard(slot[0], slot[1], kind, cfg["color"], cfg["path"])
+                SkillCard(slot[0], slot[1], kind, cfg["color"], cfg["ring_color"], cfg["path"])
             )
 
     def _spawn_initial_nearby_prey_if_needed(self):
@@ -302,7 +303,7 @@ class World:
 
         kind = random.choice(list(SKILL_TYPES.keys()))
         cfg = SKILL_TYPES[kind]
-        self.skill_cards.append(SkillCard(slot[0], slot[1], kind, cfg["color"], cfg["path"]))
+        self.skill_cards.append(SkillCard(slot[0], slot[1], kind, cfg["color"], cfg["ring_color"], cfg["path"]))
 
     def _spawn_beast(self):
         slot = self._random_tile_slot(
@@ -517,19 +518,25 @@ class World:
 
     def _draw_skill_card(self, screen, screen_x, screen_y, card, time):
         tile_rect = pygame.Rect(int(screen_x), int(screen_y), WORLD_TILE_SIZE, WORLD_TILE_SIZE)
+        center = tile_rect.center
 
         pulse = 0.75 + 0.25 * math.sin(time * 4.8)
         glow_radius = int(22 * pulse)
         glow_size = glow_radius * 2
         glow = pygame.Surface((glow_size, glow_size), pygame.SRCALPHA)
         pygame.draw.circle(glow, (*card.color, 78), (glow_radius, glow_radius), glow_radius)
-        screen.blit(glow, (tile_rect.centerx - glow_radius, tile_rect.centery - glow_radius))
+        screen.blit(glow, (center[0] - glow_radius, center[1] - glow_radius))
 
-        slot_rect = tile_rect.inflate(-10, -10)
-        pygame.draw.rect(screen, (34, 48, 34), tile_rect.inflate(-4, -4), border_radius=14)
-        pygame.draw.rect(screen, (*card.color, 160), slot_rect, width=2, border_radius=12)
+        outer_radius = WORLD_TILE_SIZE // 2 - 6
+        inner_radius = max(outer_radius - 5, 10)
+        pygame.draw.circle(screen, (20, 30, 22), center, outer_radius + 2)
+        pygame.draw.circle(screen, (*card.color, 46), center, outer_radius)
+        pygame.draw.circle(screen, card.ring_color, center, outer_radius, 4)
+        pygame.draw.circle(screen, (34, 48, 34), center, inner_radius)
 
-        icon_rect = tile_rect.inflate(-14, -14)
+        icon_size = max(WORLD_TILE_SIZE - 20, 20)
+        icon_rect = pygame.Rect(0, 0, icon_size, icon_size)
+        icon_rect.center = center
         icon = self.sprite_bank.get(card.sprite_path, icon_rect.size, card.color)
         screen.blit(icon, icon_rect.topleft)
 
@@ -607,6 +614,10 @@ class World:
     def remove_skill_card(self, card):
         if card in self.skill_cards:
             self.skill_cards.remove(card)
+
+    def remove_obstacle(self, obstacle):
+        if obstacle in self.obstacle_list:
+            self.obstacle_list.remove(obstacle)
 
     def remove_guide(self, guide):
         if guide in self.guide_list:

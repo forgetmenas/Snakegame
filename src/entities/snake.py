@@ -23,6 +23,8 @@ from src.core.settings import (
     SNAKE_SPEED_BOOST_MULTIPLIER,
     SNAKE_TARGET_REACHED_DISTANCE,
     SNAKE_TURN_SPEED,
+    SNAKE_VISION_SURGE_DURATION,
+    SNAKE_VISION_SURGE_MULTIPLIER,
     VISION_GROWTH_PER_SEGMENT,
 )
 
@@ -39,6 +41,7 @@ class Snake:
         self.moving = False
         self.target_point = None
         self.speed_boost_timer = 0.0
+        self.vision_surge_timer = 0.0
         self.reset()
 
     @property
@@ -64,6 +67,12 @@ class Snake:
 
     @property
     def vision_multiplier(self):
+        if self.vision_surge_timer > 0:
+            return max(self.growth_vision_multiplier, SNAKE_VISION_SURGE_MULTIPLIER)
+        return self.growth_vision_multiplier
+
+    @property
+    def growth_vision_multiplier(self):
         extra_segments = max(0, self.length - SNAKE_INITIAL_LENGTH)
         return min(MAX_VISION_MULTIPLIER, 1.0 + extra_segments * VISION_GROWTH_PER_SEGMENT)
 
@@ -88,6 +97,7 @@ class Snake:
         self.moving = False
         self.target_point = None
         self.speed_boost_timer = 0.0
+        self.vision_surge_timer = 0.0
 
     def set_target(self, world_x, world_y):
         self.target_point = [
@@ -102,6 +112,9 @@ class Snake:
     def apply_speed_boost(self, duration=SNAKE_SPEED_BOOST_DURATION):
         self.speed_boost_timer = max(self.speed_boost_timer, duration)
 
+    def apply_vision_surge(self, duration=SNAKE_VISION_SURGE_DURATION):
+        self.vision_surge_timer = max(self.vision_surge_timer, duration)
+
     def update(self, dt):
         if not self.alive:
             return
@@ -112,6 +125,8 @@ class Snake:
 
         if self.speed_boost_timer > 0:
             self.speed_boost_timer = max(0.0, self.speed_boost_timer - dt)
+        if self.vision_surge_timer > 0:
+            self.vision_surge_timer = max(0.0, self.vision_surge_timer - dt)
 
         if self.target_point is None:
             self.moving = False
@@ -217,6 +232,25 @@ class Snake:
         self.hunger = HUNGER_PENALTY_RESET
         if len(self.position_history) > 2:
             self.position_history = self.position_history[-2:]
+
+    def lose_segments(self, amount=1):
+        removed = 0
+        for _ in range(amount):
+            if len(self.segments) <= 1:
+                break
+            self.segments.pop()
+            removed += 1
+
+        if removed and len(self.position_history) > 2:
+            keep_history = len(self.segments) * SNAKE_SEGMENT_SPACING + 240
+            newest = self.position_history[-1][2]
+            while (
+                len(self.position_history) > 2
+                and (newest - self.position_history[0][2]) > keep_history
+            ):
+                self.position_history.pop(0)
+
+        return removed
 
     def grow(self, amount=1):
         for _ in range(amount):

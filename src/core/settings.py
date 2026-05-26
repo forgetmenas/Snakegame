@@ -38,8 +38,8 @@ def _detect_screen_size():
 
 # Screen and world
 SCREEN_WIDTH, SCREEN_HEIGHT = _detect_screen_size()
-MAP_WIDTH = 8000
-MAP_HEIGHT = 8000
+MAP_WIDTH = 16000
+MAP_HEIGHT = 16000
 FPS = 60
 
 WORLD_TILE_SIZE = 60
@@ -58,9 +58,11 @@ SNAKE_BODY_RADIUS_MIN = 8
 SNAKE_TARGET_REACHED_DISTANCE = 22
 SNAKE_SPEED_BOOST_MULTIPLIER = 1.65
 SNAKE_SPEED_BOOST_DURATION = 5.0
+SNAKE_VISION_SURGE_MULTIPLIER = 2.0
+SNAKE_VISION_SURGE_DURATION = 5.0
 SNAKE_GLOW_ALPHA = 58
 VISION_GROWTH_PER_SEGMENT = 0.05
-MAX_VISION_MULTIPLIER = 1.25
+MAX_VISION_MULTIPLIER = 1.5
 
 SNAKE_BODY_COLOR_BRIGHT = (142, 232, 112)
 SNAKE_BODY_COLOR_DARK = (52, 156, 52)
@@ -88,22 +90,22 @@ GRASS_TEXTURE_SIZE = 256
 WORLD_BORDER_COLOR = (230, 60, 60)
 
 # Initial spawn
-INITIAL_WORLD_X = 3000
-INITIAL_WORLD_Y = 3000
+INITIAL_WORLD_X = MAP_WIDTH // 2
+INITIAL_WORLD_Y = MAP_HEIGHT // 2
 
 # World population
-PREY_TARGET_COUNT = 200
-PREY_REFRESH_INTERVAL = 3.0
+PREY_TARGET_COUNT = 400
+PREY_REFRESH_INTERVAL = 1.5
 GUIDE_COUNT = 8
 INITIAL_BEAST_COUNT = 5
-SKILL_TARGET_COUNT = 40
-SKILL_REFRESH_INTERVAL = 4.0
+SKILL_TARGET_COUNT = 24
+SKILL_REFRESH_INTERVAL = 8.0
 PREY_SPAWN_EXCLUSION_RADIUS = 150
 SKILL_SPAWN_EXCLUSION_RADIUS = 150
 BEAST_SPAWN_EXCLUSION_RADIUS = 320
 GUIDE_SPAWN_EXCLUSION_RADIUS = 260
-BEAST_TILE_FOOTPRINT = 3
-ADVENTURE_OBSTACLE_MAX_COUNT = 5
+BEAST_TILE_FOOTPRINT = 2
+ADVENTURE_OBSTACLE_MAX_COUNT = 35
 ADVENTURE_OBSTACLE_LIFETIME = 30.0
 ADVENTURE_OBSTACLE_SPAWN_INTERVAL = 6.0
 
@@ -124,18 +126,27 @@ SKILL_TYPES = {
     "purge": {
         "path": "assets/sprites/skills/purge.png",
         "color": (255, 140, 112),
+        "ring_color": (255, 96, 72),
     },
     "haste": {
         "path": "assets/sprites/skills/haste.png",
         "color": (120, 214, 255),
+        "ring_color": (70, 182, 255),
     },
     "harvest": {
         "path": "assets/sprites/skills/harvest.png",
         "color": (255, 214, 120),
+        "ring_color": (255, 184, 62),
     },
     "grow": {
         "path": "assets/sprites/skills/grow.png",
         "color": (132, 234, 136),
+        "ring_color": (88, 208, 108),
+    },
+    "vision": {
+        "path": "assets/sprites/skills/vision.png",
+        "color": (210, 170, 255),
+        "ring_color": (166, 112, 255),
     },
 }
 

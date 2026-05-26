@@ -5,6 +5,7 @@ from __future__ import annotations
 import pygame
 
 from src.core.settings import MAP_HEIGHT, MAP_WIDTH, SNAKE_HEAD_RADIUS
+from src.systems.keybinds import action_pressed
 
 
 class InputHandler:
@@ -29,15 +30,15 @@ class InputHandler:
             if event.type == pygame.QUIT:
                 self.quit = True
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+                if action_pressed(event, "quit"):
                     self.quit = True
-                elif event.key == pygame.K_q:
+                elif action_pressed(event, "pause"):
                     self.pause_requested = True
-                elif event.key == pygame.K_r:
+                elif action_pressed(event, "restart"):
                     self.restart = True
-                elif event.key == pygame.K_m:
+                elif action_pressed(event, "menu"):
                     self.back_to_menu = True
-                elif event.key == pygame.K_SPACE:
+                elif action_pressed(event, "activate_skill"):
                     self.activate_skill = True
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 world_x = event.pos[0] + camera.offset[0]

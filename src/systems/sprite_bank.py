@@ -36,20 +36,26 @@ class SpriteBank:
     def _build_placeholder(self, size: tuple[int, int], color: tuple[int, int, int]):
         width, height = size
         surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        pattern = pygame.Surface((width, height), pygame.SRCALPHA)
+        mask = pygame.Surface((width, height), pygame.SRCALPHA)
 
-        outer = pygame.Rect(0, 0, width, height)
-        inner = outer.inflate(-8, -8)
-        core = inner.inflate(-12, -12)
+        radius = min(width, height) // 2
+        center = (width // 2, height // 2)
+        inner_radius = max(radius - 4, 1)
+        core_radius = max(inner_radius - 8, 1)
 
-        pygame.draw.rect(surface, (*color, 54), outer, border_radius=16)
-        pygame.draw.rect(surface, (*color, 168), inner, width=2, border_radius=14)
-        if core.width > 0 and core.height > 0:
-            pygame.draw.rect(surface, (*color, 64), core, border_radius=10)
+        pygame.draw.circle(surface, (*color, 54), center, radius)
+        pygame.draw.circle(surface, (*color, 168), center, inner_radius, 2)
+        pygame.draw.circle(surface, (*color, 72), center, core_radius)
 
-        step = max(12, min(width, height) // 5)
+        step = max(10, min(width, height) // 5)
         for offset in range(-height, width + height, step):
             start = (offset, height)
             end = (offset + height, 0)
-            pygame.draw.line(surface, (*color, 62), start, end, 2)
+            pygame.draw.line(pattern, (*color, 62), start, end, 2)
+
+        pygame.draw.circle(mask, (255, 255, 255, 255), center, radius)
+        pattern.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        surface.blit(pattern, (0, 0))
 
         return surface

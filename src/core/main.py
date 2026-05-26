@@ -70,6 +70,7 @@ from src.systems.audio import AudioManager
 from src.systems.camera import Camera
 from src.systems.fog import FogOfWar
 from src.systems.input_handler import InputHandler
+from src.systems.keybinds import action_pressed
 from src.systems.sprite_bank import SpriteBank
 
 
@@ -285,16 +286,24 @@ def draw_adventure_hud(screen, snake, font, small_font, max_length, held_skill, 
     screen.blit(font.render(f"饱腹度 {satiety:.0f}%", True, HUD_TEXT_COLOR), (HUD_LEFT + 18, HUD_TOP + 14))
     screen.blit(font.render(f"长度 {snake.length} / 最高 {max_length}", True, HUD_TEXT_COLOR), (HUD_LEFT + 18, HUD_TOP + 72))
 
+    boost_parts = []
+    if snake.speed_boost_timer > 0:
+        boost_parts.append(f"加速 {snake.speed_boost_timer:.1f}s")
+    if snake.vision_surge_timer > 0:
+        boost_parts.append(f"视野强化 {snake.vision_surge_timer:.1f}s")
+
     if not snake.alive:
         status = "状态 已死亡"
-    elif snake.speed_boost_timer > 0 and snake.moving:
-        status = f"自动游走  加速 {snake.speed_boost_timer:.1f}s  视野 x{snake.vision_multiplier:.2f}"
-    elif snake.speed_boost_timer > 0:
-        status = f"等待指令  加速保留 {snake.speed_boost_timer:.1f}s  视野 x{snake.vision_multiplier:.2f}"
     elif snake.moving:
-        status = f"自动游走  速度 {snake.current_speed:.0f}px/s  视野 x{snake.vision_multiplier:.2f}"
+        status = f"自动游走  速度 {snake.current_speed:.0f}px/s"
+        if boost_parts:
+            status += "  " + "  ".join(boost_parts)
+        status += f"  视野 x{snake.vision_multiplier:.2f}"
     else:
-        status = f"等待左键指令  视野 x{snake.vision_multiplier:.2f}"
+        status = "等待左键指令"
+        if boost_parts:
+            status += "  " + "  ".join(boost_parts)
+        status += f"  视野 x{snake.vision_multiplier:.2f}"
     screen.blit(small_font.render(status, True, HUD_HINT_COLOR), (HUD_LEFT + 18, HUD_TOP + 102))
 
     if held_skill is not None:
@@ -311,9 +320,17 @@ def draw_held_skill(screen, held_skill, sprite_bank):
     surface = pygame.Surface(rect.size, pygame.SRCALPHA)
     surface.fill((16, 28, 18, 138))
     screen.blit(surface, rect.topleft)
-    pygame.draw.rect(screen, (122, 166, 120), rect, 2, border_radius=18)
     config = SKILL_TYPES[held_skill]
-    icon_rect = rect.inflate(-12, -12)
+    center = rect.center
+    outer_radius = rect.width // 2 - 10
+    inner_radius = max(outer_radius - 6, 12)
+    pygame.draw.circle(screen, (22, 36, 24), center, outer_radius + 3)
+    pygame.draw.circle(screen, (*config["color"], 40), center, outer_radius)
+    pygame.draw.circle(screen, config["ring_color"], center, outer_radius, 4)
+    pygame.draw.circle(screen, (28, 42, 30), center, inner_radius)
+    icon_size = max(rect.width - 30, 26)
+    icon_rect = pygame.Rect(0, 0, icon_size, icon_size)
+    icon_rect.center = center
     icon = sprite_bank.get(config["path"], icon_rect.size, config["color"])
     screen.blit(icon, icon_rect.topleft)
 
@@ -382,7 +399,7 @@ def draw_menu(screen, title_font, body_font, small_font, number_font):
     footer_y = min(SCREEN_HEIGHT - 100, buttons[MODE_CLASSIC].bottom + 56)
     footer_lines = [
         "Q 在游戏中会进入暂停菜单；暂停后按 R 继续、M 回主界面、ESC 退出。",
-        "模式 2 的野兽占 3x3 格，技能卡占 1x1 格，贴图接口已保留。",
+        "模式 2 的野兽占 2x2 格，技能卡占 1x1 格，贴图接口已保留。",
     ]
     for line in footer_lines:
         draw_text_centered(screen, small_font, line, MENU_HINT_COLOR, footer_y)
@@ -500,6 +517,11 @@ def activate_held_skill(skill_kind, snake, world, audio):
         audio.play_eat()
         return True
 
+    if skill_kind == "vision":
+        snake.apply_vision_surge()
+        audio.play_guide()
+        return True
+
     return False
 
 
@@ -532,8 +554,9 @@ def handle_adventure_collisions(snake, world, audio, held_skill):
 
     obstacle = world.get_colliding_obstacle(head_x, head_y)
     if obstacle is not None:
-        snake.alive = False
-        audio.play_death()
+        snake.lose_segments(1)
+        world.remove_obstacle(obstacle)
+        audio.play_guide()
 
     guide = world.get_colliding_guide(head_x, head_y)
     if guide is not None:
@@ -637,11 +660,21 @@ def draw_adventure_scene(screen, camera, world, snake, fog, click_effects, game_
 def main():
     pygame.init()
     try:
+        # This game never needs text composition; disabling it avoids IME
+        # swallowing gameplay letters on some Windows keyboard layouts.
+        pygame.key.stop_text_input()
+    except AttributeError:
+        pass
+    try:
         pygame.mixer.init(buffer=512)
     except pygame.error:
         pass
 
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
+    try:
+        pygame.key.stop_text_input()
+    except AttributeError:
+        pass
     pygame.display.set_caption("贪吃蛇双模式")
     clock = pygame.time.Clock()
 
@@ -678,9 +711,9 @@ def main():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
+                    if action_pressed(event, "quit"):
                         running = False
-                    elif event.key == pygame.K_1:
+                    elif action_pressed(event, "menu_classic"):
                         mode_state = start_mode(MODE_CLASSIC, sprite_bank)
                         (
                             state,
@@ -696,7 +729,7 @@ def main():
                             max_length,
                             game_time,
                         ) = _apply_mode_state(mode_state)
-                    elif event.key == pygame.K_2:
+                    elif action_pressed(event, "menu_adventure"):
                         mode_state = start_mode(MODE_ADVENTURE, sprite_bank)
                         (
                             state,
@@ -773,9 +806,9 @@ def main():
 
                     snake.update(dt)
                     camera.update(snake.head_pos[0], snake.head_pos[1], dt)
-                    fog.update(snake.head_pos, snake.current_vision_radius)
                     world.update(dt, snake)
                     held_skill = handle_adventure_collisions(snake, world, audio, held_skill)
+                    fog.update(snake.head_pos, snake.current_vision_radius)
                     click_effects = [effect for effect in click_effects if effect.update(dt)]
                     game_time += dt
                     max_length = max(max_length, snake.length)
@@ -791,14 +824,14 @@ def main():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
+                    if action_pressed(event, "quit"):
                         running = False
-                    elif event.key == pygame.K_q:
+                    elif action_pressed(event, "pause"):
                         paused_mode = MODE_CLASSIC
                         state = STATE_PAUSED
-                    elif event.key == pygame.K_r:
+                    elif action_pressed(event, "restart"):
                         classic_game.reset()
-                    elif event.key == pygame.K_m:
+                    elif action_pressed(event, "menu"):
                         state = STATE_MENU
                     else:
                         classic_game.handle_event(event)
@@ -822,11 +855,11 @@ def main():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if event.key in (pygame.K_r, pygame.K_c, pygame.K_q):
+                    if action_pressed(event, "resume"):
                         state = STATE_ADVENTURE if paused_mode == MODE_ADVENTURE else STATE_CLASSIC
-                    elif event.key == pygame.K_m:
+                    elif action_pressed(event, "menu"):
                         state = STATE_MENU
-                    elif event.key == pygame.K_ESCAPE:
+                    elif action_pressed(event, "quit"):
                         running = False
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     buttons = get_pause_button_rects()
@@ -850,9 +883,9 @@ def main():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
+                    if action_pressed(event, "quit"):
                         running = False
-                    elif event.key == pygame.K_r:
+                    elif action_pressed(event, "restart"):
                         mode_state = start_mode(active_mode, sprite_bank)
                         (
                             state,
@@ -868,7 +901,7 @@ def main():
                             max_length,
                             game_time,
                         ) = _apply_mode_state(mode_state)
-                    elif event.key == pygame.K_m:
+                    elif action_pressed(event, "menu"):
                         state = STATE_MENU
 
         pygame.display.flip()
