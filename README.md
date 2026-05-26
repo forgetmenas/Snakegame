@@ -13,6 +13,22 @@ python run.py
 
 进入游戏后，点击界面中的 `1` 或 `2` 选择模式，也支持键盘 `1` / `2`。
 
+## 项目结构
+
+```text
+.
+├── .gitignore
+├── README.md
+├── requirements.txt
+├── run.py
+├── .vscode/
+├── assets/
+├── docs/
+└── src/
+.
+
+```
+
 ## 模式说明
 
 ### 1. 经典模式
