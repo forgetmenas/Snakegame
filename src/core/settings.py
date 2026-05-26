@@ -1,111 +1,213 @@
-"""迷雾贪吃蛇 - 游戏常量配置"""
+"""Shared configuration for the snake game."""
 
-# 屏幕与地图
-SCREEN_WIDTH = 1920
-SCREEN_HEIGHT = 1080
-MAP_WIDTH = 6000
-MAP_HEIGHT = 6000
-MAP_AREA = MAP_WIDTH * MAP_HEIGHT
+from __future__ import annotations
+
+import ctypes
+
+
+def _enable_dpi_awareness():
+    """Ask Windows for physical desktop pixels so fullscreen layout is not scaled."""
+
+    try:
+        shcore = ctypes.windll.shcore
+        shcore.SetProcessDpiAwareness(2)
+        return
+    except Exception:
+        pass
+
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+def _detect_screen_size():
+    default_width = 1920
+    default_height = 1080
+    try:
+        _enable_dpi_awareness()
+        user32 = ctypes.windll.user32
+        display_width = int(user32.GetSystemMetrics(0))
+        display_height = int(user32.GetSystemMetrics(1))
+        if display_width <= 0 or display_height <= 0:
+            raise ValueError("invalid display size")
+        return display_width, display_height
+    except Exception:
+        return default_width, default_height
+
+
+# Screen and world
+SCREEN_WIDTH, SCREEN_HEIGHT = _detect_screen_size()
+MAP_WIDTH = 8000
+MAP_HEIGHT = 8000
 FPS = 60
 
-# 蛇基础参数
-SNAKE_BASE_SPEED = 300
-SNAKE_MIN_SPEED_FACTOR = 0.3
-SNAKE_TURN_SPEED = 5.0
-SNAKE_SEGMENT_RADIUS = 12
+WORLD_TILE_SIZE = 60
+WORLD_COLS = MAP_WIDTH // WORLD_TILE_SIZE
+WORLD_ROWS = MAP_HEIGHT // WORLD_TILE_SIZE
+
+# Snake tuning
+SNAKE_BASE_SPEED = 320.0
+SNAKE_MIN_SPEED_FACTOR = 0.35
+SNAKE_TURN_SPEED = 5.4
 SNAKE_INITIAL_LENGTH = 10
 SNAKE_HEAD_RADIUS = 14
 SNAKE_SEGMENT_SPACING = 26
 SNAKE_BODY_RADIUS_MAX = 14
 SNAKE_BODY_RADIUS_MIN = 8
-SNAKE_BODY_COLOR_BRIGHT = (120, 220, 90)
-SNAKE_BODY_COLOR_DARK = (40, 140, 40)
-SNAKE_HEAD_COLOR = (255, 220, 50)
-SNAKE_GLOW_ALPHA = 50
+SNAKE_TARGET_REACHED_DISTANCE = 22
+SNAKE_SPEED_BOOST_MULTIPLIER = 1.65
+SNAKE_SPEED_BOOST_DURATION = 5.0
+SNAKE_GLOW_ALPHA = 58
+VISION_GROWTH_PER_SEGMENT = 0.05
+MAX_VISION_MULTIPLIER = 1.25
 
-# 饥饿系统
+SNAKE_BODY_COLOR_BRIGHT = (142, 232, 112)
+SNAKE_BODY_COLOR_DARK = (52, 156, 52)
+SNAKE_HEAD_COLOR = (255, 226, 92)
+
+# Hunger
 HUNGER_MAX = 100.0
 HUNGER_RATE = 100.0 / 30.0
 HUNGER_PENALTY_RESET = 50.0
 
-# 迷雾系统
+# Fog of war
 HEAD_VISION_RADIUS = 200
-BODY_VISION_WIDTH = 70
 FOG_EDGE_FEATHER = 40
 FOG_COLOR = (20, 20, 30)
 FOG_COOKIE_QUALITY = 50
-FOG_BODY_CONNECT_SEGMENTS = True
-FOG_HEAD_RADIUS = HEAD_VISION_RADIUS
-FOG_TRAIL_WIDTH = BODY_VISION_WIDTH
 
-# 相机
-CAMERA_LERP = 0.1
+# Camera
+CAMERA_LERP = 0.12
 
-# 地图背景
-BG_COLOR = (50, 70, 50)
-GRID_COLOR = (60, 85, 60)
-GRID_SIZE = 100
-GRASS_COLOR = (35, 55, 35)
-GRASS_DENSITY = 0.003
+# Background and scene lighting
+BG_COLOR = (84, 118, 78)
+GRASS_COLOR = (102, 142, 94)
+GRASS_DENSITY = 0.005
 GRASS_TEXTURE_SIZE = 256
+WORLD_BORDER_COLOR = (230, 60, 60)
 
-# 蛇的颜色（旧，保留兼容）
-SNAKE_BODY_COLOR = (100, 200, 80)
-SNAKE_HEAD_COLOR = (255, 220, 50)
-
-# HUD
-HUD_TEXT_COLOR = (220, 220, 220)
-HUD_FONT_SIZE = 26
-
-# 初始位置
+# Initial spawn
 INITIAL_WORLD_X = 3000
 INITIAL_WORLD_Y = 3000
 
-# ===== 实体系统参数 =====
-PREY_BASE_COUNT = 20
-PREY_REFRESH_INTERVAL = 8
+# World population
+PREY_TARGET_COUNT = 200
+PREY_REFRESH_INTERVAL = 3.0
 GUIDE_COUNT = 8
-INITIAL_BEAST_COUNT = 3
-SPAWN_EXCLUSION_RADIUS = 300     # 生成时避开蛇头的半径
-PREY_MAX_COUNT = 200             # 性能上限
+INITIAL_BEAST_COUNT = 5
+SKILL_TARGET_COUNT = 40
+SKILL_REFRESH_INTERVAL = 4.0
+PREY_SPAWN_EXCLUSION_RADIUS = 150
+SKILL_SPAWN_EXCLUSION_RADIUS = 150
+BEAST_SPAWN_EXCLUSION_RADIUS = 320
+GUIDE_SPAWN_EXCLUSION_RADIUS = 260
+BEAST_TILE_FOOTPRINT = 3
+ADVENTURE_OBSTACLE_MAX_COUNT = 5
+ADVENTURE_OBSTACLE_LIFETIME = 30.0
+ADVENTURE_OBSTACLE_SPAWN_INTERVAL = 6.0
 
-# 猎物类型: (名称, 权重, length_bonus, 颜色, 半径)
 PREY_TYPES = [
-    ("老鼠", 40, 1, (180, 180, 180), 6),
-    ("兔子", 30, 2, (200, 180, 140), 8),
-    ("野鸡", 20, 3, (180, 140, 80), 9),
-    ("鹿",   10, 5, (160, 120, 60), 12),
+    ("mouse", 40, 1, (212, 214, 212), 10),
+    ("rabbit", 30, 2, (230, 210, 174), 12),
+    ("pheasant", 20, 3, (218, 170, 108), 13),
+    ("deer", 10, 5, (194, 150, 96), 16),
 ]
 
-# 野兽类型: (名称, 颜色, 半径)
 BEAST_TYPES = [
-    ("虎", (255, 80, 60), 18),
-    ("狮", (240, 180, 40), 20),
-    ("熊", (180, 100, 50), 22),
+    ("wolf", (240, 116, 92)),
+    ("boar", (236, 176, 82)),
+    ("bear", (188, 122, 82)),
 ]
 
-# 碰撞检测阈值
-COLLISION_PREY = SNAKE_HEAD_RADIUS + 12    # 蛇头+猎物 最大半径和
-COLLISION_BEAST = SNAKE_HEAD_RADIUS + 18   # 蛇头+野兽 半径和
-GUIDE_DISCOVER_RADIUS = 60                 # 发现指引的距离
-GUIDE_LIFETIME = 20.0                      # 指引存活秒数
-GUIDE_ARROW_LENGTH = 20                    # 指引箭头长度
+SKILL_TYPES = {
+    "purge": {
+        "path": "assets/sprites/skills/purge.png",
+        "color": (255, 140, 112),
+    },
+    "haste": {
+        "path": "assets/sprites/skills/haste.png",
+        "color": (120, 214, 255),
+    },
+    "harvest": {
+        "path": "assets/sprites/skills/harvest.png",
+        "color": (255, 214, 120),
+    },
+    "grow": {
+        "path": "assets/sprites/skills/grow.png",
+        "color": (132, 234, 136),
+    },
+}
 
-# ===== UI 颜色 =====
-MENU_BG_COLOR = (15, 25, 15)
-MENU_TITLE_COLOR = (255, 220, 80)
-MENU_TEXT_COLOR = (200, 200, 200)
-MENU_HINT_COLOR = (140, 160, 140)
-GAMEOVER_TITLE_COLOR = (255, 80, 60)
-GAMEOVER_TEXT_COLOR = (220, 200, 180)
-SATIETY_BAR_WIDTH = 200
-SATIETY_BAR_HEIGHT = 16
-SATIETY_BAR_BG = (40, 40, 40)
-SATIETY_BAR_LOW = (220, 60, 50)
-SATIETY_BAR_MID = (220, 180, 50)
-SATIETY_BAR_HIGH = (80, 200, 60)
+BEAST_SPRITE_PATHS = {
+    "wolf": "assets/sprites/beasts/wolf.png",
+    "boar": "assets/sprites/beasts/boar.png",
+    "bear": "assets/sprites/beasts/bear.png",
+}
 
-# ===== 音效 =====
+# Collision
+COLLISION_PREY = SNAKE_HEAD_RADIUS + 24
+GUIDE_DISCOVER_RADIUS = 72
+GUIDE_LIFETIME = 18.0
+GUIDE_ARROW_LENGTH = 22
+SKILL_PICKUP_RADIUS = SNAKE_HEAD_RADIUS + 22
+
+# HUD
+HUD_TEXT_COLOR = (234, 240, 228)
+HUD_HINT_COLOR = (182, 208, 176)
+HUD_ACCENT_COLOR = (255, 222, 96)
+HUD_FONT_SIZE = 28
+HUD_LEFT = 48
+HUD_TOP = 18
+HUD_WIDTH = 420
+HUD_HEIGHT = 128
+HUD_PANEL_COLOR = (8, 14, 8, 166)
+SKILL_HUD_SIZE = 92
+SKILL_HUD_LEFT = 34
+SKILL_HUD_BOTTOM = 34
+
+SATIETY_BAR_WIDTH = 228
+SATIETY_BAR_HEIGHT = 18
+SATIETY_BAR_BG = (46, 56, 44)
+SATIETY_BAR_LOW = (228, 82, 70)
+SATIETY_BAR_MID = (236, 194, 86)
+SATIETY_BAR_HIGH = (118, 224, 104)
+
+# Menu and overlays
+MENU_BG_COLOR = (30, 46, 34)
+MENU_PANEL_COLOR = (12, 18, 14, 176)
+MENU_CARD_COLOR = (54, 78, 58)
+MENU_CARD_BORDER = (188, 220, 166)
+MENU_TITLE_COLOR = (255, 228, 110)
+MENU_TEXT_COLOR = (224, 232, 220)
+MENU_HINT_COLOR = (178, 198, 172)
+GAMEOVER_TITLE_COLOR = (255, 126, 92)
+GAMEOVER_TEXT_COLOR = (236, 228, 210)
+PAUSE_PANEL_COLOR = (10, 16, 12, 188)
+PAUSE_BUTTON_COLOR = (54, 78, 58)
+PAUSE_BUTTON_BORDER = (188, 220, 166)
+
+# Click effect
+CLICK_EFFECT_DURATION = 0.46
+CLICK_EFFECT_COLOR = (116, 214, 255)
+CLICK_EFFECT_ACCENT = (255, 236, 160)
+
+# Classic mode
+CLASSIC_GRID_COLS = 40
+CLASSIC_GRID_ROWS = 22
+CLASSIC_MOVE_INTERVAL = 0.14
+CLASSIC_INITIAL_LENGTH = 4
+CLASSIC_BOARD_MARGIN = 24
+CLASSIC_BOARD_BG = (24, 34, 26)
+CLASSIC_BOARD_LINE = (70, 98, 72)
+CLASSIC_SNAKE_BODY = (114, 214, 106)
+CLASSIC_SNAKE_HEAD = (255, 226, 92)
+CLASSIC_FOOD = (255, 108, 92)
+CLASSIC_OBSTACLE = (84, 100, 88)
+CLASSIC_OBSTACLE_EDGE = (44, 56, 48)
+CLASSIC_TEXT_SHADOW = (16, 22, 14)
+
+# Audio
 AUDIO_EAT = "eat.wav"
 AUDIO_DEATH = "death.wav"
 AUDIO_GUIDE = "guide.wav"
