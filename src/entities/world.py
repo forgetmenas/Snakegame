@@ -1,363 +1,645 @@
-"""
-实体管理系统 - Prey/Beast/Guide + World 管理器
-完整实体生命周期：生成、刷新、指引方向、绘制
-"""
+"""Entity management for the adventure mode."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 import math
 import random
+
 import pygame
-from src.core.settings import *
+
+from src.core.settings import (
+    ADVENTURE_OBSTACLE_LIFETIME,
+    ADVENTURE_OBSTACLE_MAX_COUNT,
+    ADVENTURE_OBSTACLE_SPAWN_INTERVAL,
+    BEAST_SPRITE_PATHS,
+    BEAST_TILE_FOOTPRINT,
+    BEAST_TYPES,
+    BEAST_SPAWN_EXCLUSION_RADIUS,
+    CLICK_EFFECT_ACCENT,
+    COLLISION_PREY,
+    GUIDE_SPAWN_EXCLUSION_RADIUS,
+    GUIDE_ARROW_LENGTH,
+    GUIDE_COUNT,
+    GUIDE_DISCOVER_RADIUS,
+    GUIDE_LIFETIME,
+    INITIAL_BEAST_COUNT,
+    PREY_SPAWN_EXCLUSION_RADIUS,
+    PREY_REFRESH_INTERVAL,
+    PREY_TARGET_COUNT,
+    PREY_TYPES,
+    SCREEN_HEIGHT,
+    SCREEN_WIDTH,
+    SKILL_PICKUP_RADIUS,
+    SKILL_SPAWN_EXCLUSION_RADIUS,
+    SKILL_REFRESH_INTERVAL,
+    SKILL_TARGET_COUNT,
+    SKILL_TYPES,
+    SNAKE_HEAD_RADIUS,
+    WORLD_COLS,
+    WORLD_ROWS,
+    WORLD_TILE_SIZE,
+)
 
 
-# =========================================================================
-# 实体类
-# =========================================================================
-
+@dataclass
 class Prey:
-    """猎物实体"""
-    __slots__ = ('x', 'y', 'type_idx', 'type_name', 'length_bonus', 'color', 'radius')
+    tile_x: int
+    tile_y: int
+    kind: str
+    length_bonus: int
+    color: tuple[int, int, int]
+    radius: int
 
-    def __init__(self, x, y, type_idx):
-        self.x = x
-        self.y = y
-        self.type_idx = type_idx
-        name, weight, bonus, color, radius = PREY_TYPES[type_idx]
-        self.type_name = name
-        self.length_bonus = bonus
-        self.color = color
-        self.radius = radius
+    @property
+    def x(self):
+        return self.tile_x * WORLD_TILE_SIZE + WORLD_TILE_SIZE / 2
+
+    @property
+    def y(self):
+        return self.tile_y * WORLD_TILE_SIZE + WORLD_TILE_SIZE / 2
 
 
+@dataclass
 class Beast:
-    """野兽实体"""
-    __slots__ = ('x', 'y', 'type_idx', 'type_name', 'color', 'radius')
+    tile_x: int
+    tile_y: int
+    kind: str
+    color: tuple[int, int, int]
 
-    def __init__(self, x, y, type_idx):
-        self.x = x
-        self.y = y
-        self.type_idx = type_idx
-        name, color, radius = BEAST_TYPES[type_idx]
-        self.type_name = name
-        self.color = color
-        self.radius = radius
+    @property
+    def rect(self):
+        return pygame.Rect(
+            self.tile_x * WORLD_TILE_SIZE,
+            self.tile_y * WORLD_TILE_SIZE,
+            BEAST_TILE_FOOTPRINT * WORLD_TILE_SIZE,
+            BEAST_TILE_FOOTPRINT * WORLD_TILE_SIZE,
+        )
+
+    @property
+    def x(self):
+        return self.rect.centerx
+
+    @property
+    def y(self):
+        return self.rect.centery
+
+    @property
+    def sprite_path(self):
+        return BEAST_SPRITE_PATHS[self.kind]
 
 
+@dataclass
+class SkillCard:
+    tile_x: int
+    tile_y: int
+    kind: str
+    color: tuple[int, int, int]
+    ring_color: tuple[int, int, int]
+    sprite_path: str
+
+    @property
+    def rect(self):
+        return pygame.Rect(
+            self.tile_x * WORLD_TILE_SIZE,
+            self.tile_y * WORLD_TILE_SIZE,
+            WORLD_TILE_SIZE,
+            WORLD_TILE_SIZE,
+        )
+
+    @property
+    def x(self):
+        return self.rect.centerx
+
+    @property
+    def y(self):
+        return self.rect.centery
+
+
+@dataclass
 class Guide:
-    """指引实体 - 指向最近的目标实体"""
-    __slots__ = ('x', 'y', 'target_type', 'direction_angle', 'lifetime', 'visible')
-
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.target_type = random.choice(["prey", "beast"])
-        self.direction_angle = 0.0
-        self.lifetime = GUIDE_LIFETIME
-        self.visible = True
+    x: float
+    y: float
+    target_type: str
+    direction_angle: float = 0.0
+    lifetime: float = GUIDE_LIFETIME
+    visible: bool = True
 
 
-# =========================================================================
-# 权重采样工具
-# =========================================================================
+@dataclass
+class AdventureObstacle:
+    tile_x: int
+    tile_y: int
+    width_tiles: int
+    height_tiles: int
+    lifetime: float = ADVENTURE_OBSTACLE_LIFETIME
 
-def _weighted_choice(weighted_items):
-    """从 [(item, weight), ...] 列表中按权重随机选择一个 item"""
-    total = sum(w for _, w in weighted_items)
-    r = random.uniform(0, total)
-    cumulative = 0
-    for item, w in weighted_items:
-        cumulative += w
-        if r <= cumulative:
-            return item
-    return weighted_items[-1][0]
+    @property
+    def rect(self):
+        return pygame.Rect(
+            self.tile_x * WORLD_TILE_SIZE,
+            self.tile_y * WORLD_TILE_SIZE,
+            self.width_tiles * WORLD_TILE_SIZE,
+            self.height_tiles * WORLD_TILE_SIZE,
+        )
 
-
-# =========================================================================
-# World 管理器
-# =========================================================================
 
 class World:
-    """管理所有实体：猎物、野兽、指引"""
+    """Tracks prey, beasts, guides, and adventure mode skill cards."""
 
-    def __init__(self, snake_ref):
+    def __init__(self, snake_ref, sprite_bank):
         self.snake = snake_ref
+        self.sprite_bank = sprite_bank
         self.prey_list = []
         self.beast_list = []
         self.guide_list = []
-
+        self.skill_cards = []
+        self.obstacle_list = []
         self._prey_timer = 0.0
+        self._skill_timer = 0.0
+        self._obstacle_timer = 0.0
         self._spawn_initial()
 
-    # ------------------------------------------------------------------
-    # 初始生成
-    # ------------------------------------------------------------------
-
     def _spawn_initial(self):
-        """初始生成所有实体，均避开蛇头"""
-        hx, hy = self.snake.head_pos
-
         for _ in range(INITIAL_BEAST_COUNT):
-            pos = self._random_position(hx, hy, SPAWN_EXCLUSION_RADIUS)
-            type_idx = random.randrange(len(BEAST_TYPES))
-            self.beast_list.append(Beast(pos[0], pos[1], type_idx))
+            self._spawn_beast()
 
         for _ in range(GUIDE_COUNT):
-            pos = self._random_position(hx, hy, SPAWN_EXCLUSION_RADIUS)
-            self.guide_list.append(Guide(pos[0], pos[1]))
+            guide = self._create_guide()
+            if guide is not None:
+                self.guide_list.append(guide)
 
-        self._refresh_prey(self.snake.length)
+        self._spawn_prey_to_target()
+        self._spawn_initial_nearby_prey_if_needed()
+        self._spawn_skill_cards_to_target()
+        self._spawn_initial_nearby_skill_if_needed()
 
-    # ------------------------------------------------------------------
-    # 随机位置
-    # ------------------------------------------------------------------
+    def _tile_rect(self, tile_x, tile_y, size_tiles=1):
+        return pygame.Rect(
+            tile_x * WORLD_TILE_SIZE,
+            tile_y * WORLD_TILE_SIZE,
+            size_tiles * WORLD_TILE_SIZE,
+            size_tiles * WORLD_TILE_SIZE,
+        )
 
-    def _random_position(self, exclude_x, exclude_y, exclude_radius):
-        """在地图内随机生成位置，避开排除区域"""
-        margin = 50
-        for _ in range(80):
-            x = random.uniform(margin, MAP_WIDTH - margin)
-            y = random.uniform(margin, MAP_HEIGHT - margin)
-            dist = math.sqrt((x - exclude_x) ** 2 + (y - exclude_y) ** 2)
-            if dist > exclude_radius:
-                return [x, y]
-        # 回退
-        return [random.uniform(0, MAP_WIDTH), random.uniform(0, MAP_HEIGHT)]
+    def _random_tile_slot(self, size_tiles, exclude_x, exclude_y, exclude_radius):
+        max_x = WORLD_COLS - size_tiles
+        max_y = WORLD_ROWS - size_tiles
 
-    # ------------------------------------------------------------------
-    # 猎物刷新
-    # ------------------------------------------------------------------
+        for _ in range(180):
+            tile_x = random.randint(0, max_x)
+            tile_y = random.randint(0, max_y)
+            rect = self._tile_rect(tile_x, tile_y, size_tiles)
+            if math.hypot(rect.centerx - exclude_x, rect.centery - exclude_y) <= exclude_radius:
+                continue
+            if self._rect_is_occupied(rect):
+                continue
+            return tile_x, tile_y
+        return None
 
-    def _target_prey_count(self):
-        """刷新公式: max(1, ceil(PREY_BASE_COUNT + 0.0015*MAP_AREA + 0.15*length - beast_count))"""
-        raw = (PREY_BASE_COUNT + 0.0015 * MAP_AREA +
-               0.15 * self.snake.length - len(self.beast_list))
-        target = max(1, math.ceil(raw))
-        return min(target, PREY_MAX_COUNT)
+    def _random_tile_slot_in_radius(self, size_tiles, min_distance, max_distance):
+        max_x = WORLD_COLS - size_tiles
+        max_y = WORLD_ROWS - size_tiles
+        head_x, head_y = self.snake.head_pos
+        candidates = []
+        for tile_x in range(max_x + 1):
+            for tile_y in range(max_y + 1):
+                rect = self._tile_rect(tile_x, tile_y, size_tiles)
+                distance = math.hypot(rect.centerx - head_x, rect.centery - head_y)
+                if distance < min_distance or distance > max_distance:
+                    continue
+                if self._rect_is_occupied(rect):
+                    continue
+                candidates.append((tile_x, tile_y))
+        if not candidates:
+            return None
+        return random.choice(candidates)
 
-    def _refresh_prey(self, snake_length):
-        """补充猎物到目标数量"""
-        target = self._target_prey_count()
-        current = len(self.prey_list)
-        to_spawn = target - current
-        if to_spawn <= 0:
+    def _rect_is_occupied(self, rect):
+        for beast in self.beast_list:
+            if rect.colliderect(beast.rect.inflate(8, 8)):
+                return True
+
+        for prey in self.prey_list:
+            if rect.colliderect(self._tile_rect(prey.tile_x, prey.tile_y)):
+                return True
+
+        for card in self.skill_cards:
+            if rect.colliderect(card.rect):
+                return True
+
+        for obstacle in self.obstacle_list:
+            if rect.colliderect(obstacle.rect.inflate(8, 8)):
+                return True
+
+        for guide in self.guide_list:
+            guide_rect = pygame.Rect(guide.x - 24, guide.y - 24, 48, 48)
+            if rect.colliderect(guide_rect):
+                return True
+
+        return False
+
+    def _spawn_prey_to_target(self):
+        weights = [prey_type[1] for prey_type in PREY_TYPES]
+        while len(self.prey_list) < PREY_TARGET_COUNT:
+            slot = self._random_tile_slot(
+                1,
+                self.snake.head_pos[0],
+                self.snake.head_pos[1],
+                PREY_SPAWN_EXCLUSION_RADIUS,
+            )
+            if slot is None:
+                break
+
+            prey_kind, _, length_bonus, color, radius = random.choices(PREY_TYPES, weights=weights, k=1)[0]
+            self.prey_list.append(
+                Prey(slot[0], slot[1], prey_kind, length_bonus, color, radius)
+            )
+
+    def _spawn_skill_cards_to_target(self):
+        all_kinds = list(SKILL_TYPES.keys())
+        while len(self.skill_cards) < SKILL_TARGET_COUNT:
+            slot = self._random_tile_slot(
+                1,
+                self.snake.head_pos[0],
+                self.snake.head_pos[1],
+                SKILL_SPAWN_EXCLUSION_RADIUS,
+            )
+            if slot is None:
+                break
+
+            existing_kinds = {card.kind for card in self.skill_cards}
+            missing = [kind for kind in all_kinds if kind not in existing_kinds]
+            kind = random.choice(missing or all_kinds)
+            cfg = SKILL_TYPES[kind]
+            self.skill_cards.append(
+                SkillCard(slot[0], slot[1], kind, cfg["color"], cfg["ring_color"], cfg["path"])
+            )
+
+    def _spawn_initial_nearby_prey_if_needed(self):
+        head_x, head_y = self.snake.head_pos
+        if any(math.hypot(prey.x - head_x, prey.y - head_y) <= 240 for prey in self.prey_list):
             return
 
-        hx, hy = self.snake.head_pos
-        # 构建权重列表: [(type_idx, weight), ...]
-        weights = [(i, PREY_TYPES[i][1]) for i in range(len(PREY_TYPES))]
+        slot = self._random_tile_slot_in_radius(1, 120, 220)
+        if slot is None:
+            return
 
-        for _ in range(to_spawn):
-            pos = self._random_position(hx, hy, SPAWN_EXCLUSION_RADIUS)
-            type_idx = _weighted_choice(weights)
-            self.prey_list.append(Prey(pos[0], pos[1], type_idx))
+        prey_kind, _, length_bonus, color, radius = random.choices(
+            PREY_TYPES,
+            weights=[prey_type[1] for prey_type in PREY_TYPES],
+            k=1,
+        )[0]
+        self.prey_list.append(Prey(slot[0], slot[1], prey_kind, length_bonus, color, radius))
 
-    # ------------------------------------------------------------------
-    # 野兽
-    # ------------------------------------------------------------------
+    def _spawn_initial_nearby_skill_if_needed(self):
+        head_x, head_y = self.snake.head_pos
+        if any(math.hypot(card.x - head_x, card.y - head_y) <= 260 for card in self.skill_cards):
+            return
+
+        slot = self._random_tile_slot_in_radius(1, 150, 250)
+        if slot is None:
+            return
+
+        kind = random.choice(list(SKILL_TYPES.keys()))
+        cfg = SKILL_TYPES[kind]
+        self.skill_cards.append(SkillCard(slot[0], slot[1], kind, cfg["color"], cfg["ring_color"], cfg["path"]))
+
+    def _spawn_beast(self):
+        slot = self._random_tile_slot(
+            BEAST_TILE_FOOTPRINT,
+            self.snake.head_pos[0],
+            self.snake.head_pos[1],
+            BEAST_SPAWN_EXCLUSION_RADIUS,
+        )
+        if slot is None:
+            return False
+
+        kind, color = random.choice(BEAST_TYPES)
+        self.beast_list.append(Beast(slot[0], slot[1], kind, color))
+        return True
+
+    def _spawn_obstacle(self):
+        if len(self.obstacle_list) >= ADVENTURE_OBSTACLE_MAX_COUNT:
+            return False
+
+        width_tiles = random.randint(1, 2)
+        height_tiles = random.randint(1, 2)
+        slot = self._random_tile_slot(
+                max(width_tiles, height_tiles),
+                self.snake.head_pos[0],
+                self.snake.head_pos[1],
+                BEAST_SPAWN_EXCLUSION_RADIUS,
+            )
+        if slot is None:
+            return False
+
+        self.obstacle_list.append(
+            AdventureObstacle(slot[0], slot[1], width_tiles, height_tiles)
+        )
+        return True
+
+    def _create_guide(self):
+        slot = self._random_tile_slot(
+            1,
+            self.snake.head_pos[0],
+            self.snake.head_pos[1],
+            GUIDE_SPAWN_EXCLUSION_RADIUS,
+        )
+        if slot is None:
+            return None
+        x = slot[0] * WORLD_TILE_SIZE + WORLD_TILE_SIZE / 2
+        y = slot[1] * WORLD_TILE_SIZE + WORLD_TILE_SIZE / 2
+        return Guide(x=x, y=y, target_type=random.choice(["prey", "beast"]))
 
     def add_beast(self):
-        """蛇捕获猎物时，在地图上新增一只野兽（避开蛇头）"""
-        hx, hy = self.snake.head_pos
-        pos = self._random_position(hx, hy, SPAWN_EXCLUSION_RADIUS)
-        type_idx = random.randrange(len(BEAST_TYPES))
-        self.beast_list.append(Beast(pos[0], pos[1], type_idx))
+        self._spawn_beast()
 
-    # ------------------------------------------------------------------
-    # 指引管理
-    # ------------------------------------------------------------------
+    def update(self, dt, snake):
+        self.snake = snake
+        self._prey_timer += dt
+        self._skill_timer += dt
+        self._obstacle_timer += dt
+        if self._prey_timer >= PREY_REFRESH_INTERVAL:
+            self._prey_timer -= PREY_REFRESH_INTERVAL
+            self._spawn_prey_to_target()
 
-    def _update_guides(self):
-        """更新所有指引的方向和生命周期"""
+        if self._skill_timer >= SKILL_REFRESH_INTERVAL:
+            self._skill_timer -= SKILL_REFRESH_INTERVAL
+            self._spawn_skill_cards_to_target()
+
+        self._update_obstacles(dt)
+        self._update_guides(dt)
+
+    def _update_obstacles(self, dt):
+        for obstacle in self.obstacle_list:
+            obstacle.lifetime -= dt
+        self.obstacle_list = [obstacle for obstacle in self.obstacle_list if obstacle.lifetime > 0]
+
+        while self._obstacle_timer >= ADVENTURE_OBSTACLE_SPAWN_INTERVAL:
+            self._obstacle_timer -= ADVENTURE_OBSTACLE_SPAWN_INTERVAL
+            if len(self.obstacle_list) < ADVENTURE_OBSTACLE_MAX_COUNT:
+                self._spawn_obstacle()
+
+    def _update_guides(self, dt):
         for guide in self.guide_list:
-            guide.lifetime -= 1.0 / FPS  # 近似每帧扣除
+            guide.lifetime -= dt
+            if guide.lifetime <= 0:
+                self._refresh_guide(guide)
+                continue
 
-            # 查找最近目标实体
-            if guide.target_type == "prey":
-                target_list = self.prey_list
-            else:
-                target_list = self.beast_list
-
+            target_list = self.prey_list if guide.target_type == "prey" else self.beast_list
             if not target_list:
                 guide.visible = False
                 continue
 
-            # 找最近的
-            nearest = None
-            nearest_dist = float('inf')
-            for entity in target_list:
-                d = math.sqrt((entity.x - guide.x) ** 2 + (entity.y - guide.y) ** 2)
-                if d < nearest_dist:
-                    nearest_dist = d
-                    nearest = entity
-
-            if nearest is not None:
-                guide.direction_angle = math.atan2(
-                    nearest.y - guide.y, nearest.x - guide.x)
-                guide.visible = True
+            nearest = min(
+                target_list,
+                key=lambda entity: math.hypot(entity.x - guide.x, entity.y - guide.y),
+            )
+            guide.direction_angle = math.atan2(nearest.y - guide.y, nearest.x - guide.x)
+            guide.visible = True
 
     def _refresh_guide(self, guide):
-        """将一个指引重新生成到随机位置（保持 target_type 不变）"""
-        hx, hy = self.snake.head_pos
-        pos = self._random_position(hx, hy, SPAWN_EXCLUSION_RADIUS)
-        guide.x, guide.y = pos[0], pos[1]
+        new_guide = self._create_guide()
+        if new_guide is None:
+            guide.visible = False
+            return
+
+        guide.x = new_guide.x
+        guide.y = new_guide.y
         guide.lifetime = GUIDE_LIFETIME
         guide.target_type = random.choice(["prey", "beast"])
-
-    # ------------------------------------------------------------------
-    # 每帧更新
-    # ------------------------------------------------------------------
-
-    def update(self, dt, snake):
-        """每帧更新"""
-        # 猎物定时刷新
-        self._prey_timer += dt
-        if self._prey_timer >= PREY_REFRESH_INTERVAL:
-            self._prey_timer -= PREY_REFRESH_INTERVAL
-            self._refresh_prey(snake.length)
-
-        # 指引：移除过期的并刷新
-        expired = [g for g in self.guide_list if g.lifetime <= 0]
-        for g in expired:
-            self._refresh_guide(g)
-
-        self._update_guides()
-
-    # ------------------------------------------------------------------
-    # 绘制（仅绘制镜头内的实体）
-    # ------------------------------------------------------------------
+        guide.direction_angle = 0.0
+        guide.visible = True
 
     def draw(self, screen, camera, time):
-        """绘制所有在镜头内的实体。
-        time: 游戏运行时间（秒），用于动画
-        """
+        for obstacle in self.obstacle_list:
+            rect = obstacle.rect
+            screen_x, screen_y = camera.world_to_screen(rect.x, rect.y)
+            if self._in_viewport(screen_x, screen_y, rect.width + rect.height):
+                self._draw_obstacle(screen, screen_x, screen_y, obstacle)
+
         for prey in self.prey_list:
-            sx, sy = camera.world_to_screen(prey.x, prey.y)
-            if not self._in_viewport(sx, sy, prey.radius):
-                continue
-            self._draw_prey(screen, sx, sy, prey)
+            screen_x, screen_y = camera.world_to_screen(prey.x, prey.y)
+            if self._in_viewport(screen_x, screen_y, prey.radius + 12):
+                self._draw_prey(screen, screen_x, screen_y, prey)
+
+        for card in self.skill_cards:
+            screen_x, screen_y = camera.world_to_screen(card.rect.x, card.rect.y)
+            if self._in_viewport(screen_x, screen_y, WORLD_TILE_SIZE):
+                self._draw_skill_card(screen, screen_x, screen_y, card, time)
 
         for beast in self.beast_list:
-            sx, sy = camera.world_to_screen(beast.x, beast.y)
-            if not self._in_viewport(sx, sy, beast.radius):
-                continue
-            self._draw_beast(screen, sx, sy, beast)
+            rect = beast.rect
+            screen_x, screen_y = camera.world_to_screen(rect.x, rect.y)
+            if self._in_viewport(screen_x, screen_y, rect.width):
+                self._draw_beast(screen, screen_x, screen_y, beast)
 
         for guide in self.guide_list:
             if not guide.visible:
                 continue
-            sx, sy = camera.world_to_screen(guide.x, guide.y)
-            if not self._in_viewport(sx, sy, 30):
-                continue
-            self._draw_guide(screen, sx, sy, guide, time)
+            screen_x, screen_y = camera.world_to_screen(guide.x, guide.y)
+            if self._in_viewport(screen_x, screen_y, 32):
+                self._draw_guide(screen, screen_x, screen_y, guide, time)
 
-    def _in_viewport(self, sx, sy, margin):
-        """判断屏幕坐标是否在可视范围内"""
-        return (-margin <= sx <= SCREEN_WIDTH + margin and
-                -margin <= sy <= SCREEN_HEIGHT + margin)
+    def _in_viewport(self, screen_x, screen_y, margin):
+        return (
+            -margin <= screen_x <= SCREEN_WIDTH + margin
+            and -margin <= screen_y <= SCREEN_HEIGHT + margin
+        )
 
-    # ------------------------------------------------------------------
-    # 实体绘制
-    # ------------------------------------------------------------------
+    def _draw_prey(self, screen, screen_x, screen_y, prey):
+        pygame.draw.circle(screen, prey.color, (int(screen_x), int(screen_y)), prey.radius)
+        pygame.draw.circle(screen, (60, 68, 56), (int(screen_x), int(screen_y)), prey.radius, 2)
 
-    def _draw_prey(self, screen, sx, sy, prey):
-        """绘制猎物：带颜色圆形 + 内部类型符号"""
-        r = prey.radius
-        # 主体圆形
-        pygame.draw.circle(screen, prey.color, (sx, sy), r)
-        # 边框
-        pygame.draw.circle(screen, (60, 60, 60), (sx, sy), r, 1)
+        if prey.kind == "mouse":
+            pygame.draw.circle(screen, (244, 244, 244), (int(screen_x) - 5, int(screen_y) - 8), 3)
+            pygame.draw.circle(screen, (244, 244, 244), (int(screen_x) + 5, int(screen_y) - 8), 3)
+        elif prey.kind == "rabbit":
+            pygame.draw.line(screen, (250, 240, 224), (screen_x - 4, screen_y - 8), (screen_x - 6, screen_y - 16), 3)
+            pygame.draw.line(screen, (250, 240, 224), (screen_x + 4, screen_y - 8), (screen_x + 6, screen_y - 16), 3)
+        elif prey.kind == "pheasant":
+            pygame.draw.polygon(
+                screen,
+                (232, 176, 74),
+                [(screen_x + prey.radius, screen_y), (screen_x + prey.radius + 8, screen_y - 4), (screen_x + prey.radius + 8, screen_y + 4)],
+            )
+        elif prey.kind == "deer":
+            pygame.draw.line(screen, (208, 184, 140), (screen_x - 4, screen_y - 10), (screen_x - 10, screen_y - 18), 2)
+            pygame.draw.line(screen, (208, 184, 140), (screen_x + 4, screen_y - 10), (screen_x + 10, screen_y - 18), 2)
 
-        # 内部符号（根据类型）
-        name = prey.type_name
-        if name == "老鼠":
-            # 两个小圆点（耳朵）
-            pygame.draw.circle(screen, (100, 100, 100), (sx - 2, sy - r + 1), 2)
-            pygame.draw.circle(screen, (100, 100, 100), (sx + 2, sy - r + 1), 2)
-        elif name == "兔子":
-            # 两个长耳朵（小椭圆用线条近似）
-            for ox in (-2, 2):
-                pygame.draw.line(screen, prey.color,
-                                 (sx + ox, sy - r), (sx + ox, sy - r - 4), 2)
-        elif name == "野鸡":
-            # 小三角形喙
-            pts = [(sx + r, sy), (sx + r + 4, sy - 2), (sx + r + 4, sy + 2)]
-            pygame.draw.polygon(screen, (200, 140, 40), pts)
-        elif name == "鹿":
-            # 两个小鹿角
-            for ox, dir in [(-3, -1), (3, 1)]:
-                pygame.draw.line(screen, (120, 80, 40),
-                                 (sx + ox, sy - r),
-                                 (sx + ox + dir * 3, sy - r - 5), 2)
+    def _draw_obstacle(self, screen, screen_x, screen_y, obstacle):
+        rect = pygame.Rect(
+            int(screen_x),
+            int(screen_y),
+            obstacle.width_tiles * WORLD_TILE_SIZE,
+            obstacle.height_tiles * WORLD_TILE_SIZE,
+        )
+        inner = rect.inflate(-6, -6)
+        pygame.draw.rect(screen, (92, 88, 82), inner, border_radius=16)
+        pygame.draw.rect(screen, (58, 54, 48), inner, width=3, border_radius=16)
+        pebble_points = [
+            (inner.x + inner.width // 4, inner.y + inner.height // 3),
+            (inner.centerx, inner.centery),
+            (inner.right - inner.width // 4, inner.bottom - inner.height // 3),
+        ]
+        for pebble_x, pebble_y in pebble_points:
+            pygame.draw.circle(screen, (132, 126, 118), (pebble_x, pebble_y), 5)
 
-    def _draw_beast(self, screen, sx, sy, beast):
-        """绘制野兽：红色调圆形 + 爪痕"""
-        r = beast.radius
-        # 主体
-        pygame.draw.circle(screen, beast.color, (sx, sy), r)
-        pygame.draw.circle(screen, (80, 30, 20), (sx, sy), r, 2)
-        # 爪痕（三条短线）
-        for angle_offs in (-0.4, 0, 0.4):
-            a = math.pi * 0.75 + angle_offs
-            x1 = sx + math.cos(a) * (r - 2)
-            y1 = sy - math.sin(a) * (r - 2)
-            x2 = sx + math.cos(a) * (r + 5)
-            y2 = sy - math.sin(a) * (r + 5)
-            pygame.draw.line(screen, (40, 10, 5), (x1, y1), (x2, y2), 2)
+    def _draw_beast(self, screen, screen_x, screen_y, beast):
+        rect = pygame.Rect(
+            int(screen_x),
+            int(screen_y),
+            BEAST_TILE_FOOTPRINT * WORLD_TILE_SIZE,
+            BEAST_TILE_FOOTPRINT * WORLD_TILE_SIZE,
+        )
 
-    def _draw_guide(self, screen, sx, sy, guide, time):
-        """绘制指引：脉冲光点 + 旋转箭头"""
-        # 脉冲光点（alpha 随 sin 变化）
-        pulse = (math.sin(time * 4.0) + 1) / 2  # 0..1
+        shadow = pygame.Surface((rect.width + 18, rect.height + 18), pygame.SRCALPHA)
+        pygame.draw.ellipse(shadow, (0, 0, 0, 72), shadow.get_rect())
+        screen.blit(shadow, (rect.x - 4, rect.y + 12))
+
+        base_rect = rect.inflate(-6, -6)
+        pygame.draw.rect(screen, (*beast.color, 66), base_rect, border_radius=18)
+        pygame.draw.rect(screen, (56, 38, 30), base_rect, width=3, border_radius=18)
+
+        for step in range(1, BEAST_TILE_FOOTPRINT):
+            offset = step * WORLD_TILE_SIZE
+            pygame.draw.line(screen, (84, 62, 44), (rect.x + offset, rect.y + 8), (rect.x + offset, rect.bottom - 8), 1)
+            pygame.draw.line(screen, (84, 62, 44), (rect.x + 8, rect.y + offset), (rect.right - 8, rect.y + offset), 1)
+
+        sprite_rect = rect.inflate(-16, -16)
+        sprite = self.sprite_bank.get(
+            beast.sprite_path,
+            (sprite_rect.width, sprite_rect.height),
+            beast.color,
+        )
+        screen.blit(sprite, sprite_rect.topleft)
+
+    def _draw_skill_card(self, screen, screen_x, screen_y, card, time):
+        tile_rect = pygame.Rect(int(screen_x), int(screen_y), WORLD_TILE_SIZE, WORLD_TILE_SIZE)
+        center = tile_rect.center
+
+        pulse = 0.75 + 0.25 * math.sin(time * 4.8)
+        glow_radius = int(22 * pulse)
+        glow_size = glow_radius * 2
+        glow = pygame.Surface((glow_size, glow_size), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*card.color, 78), (glow_radius, glow_radius), glow_radius)
+        screen.blit(glow, (center[0] - glow_radius, center[1] - glow_radius))
+
+        outer_radius = WORLD_TILE_SIZE // 2 - 6
+        inner_radius = max(outer_radius - 5, 10)
+        pygame.draw.circle(screen, (20, 30, 22), center, outer_radius + 2)
+        pygame.draw.circle(screen, (*card.color, 46), center, outer_radius)
+        pygame.draw.circle(screen, card.ring_color, center, outer_radius, 4)
+        pygame.draw.circle(screen, (34, 48, 34), center, inner_radius)
+
+        icon_size = max(WORLD_TILE_SIZE - 20, 20)
+        icon_rect = pygame.Rect(0, 0, icon_size, icon_size)
+        icon_rect.center = center
+        icon = self.sprite_bank.get(card.sprite_path, icon_rect.size, card.color)
+        screen.blit(icon, icon_rect.topleft)
+
+    def _draw_guide(self, screen, screen_x, screen_y, guide, time):
+        pulse = (math.sin(time * 4.0) + 1.0) / 2.0
         glow_radius = 8 + int(pulse * 8)
-        glow_alpha = int(60 + pulse * 120)
+        glow_alpha = int(74 + pulse * 120)
 
-        glow_surf = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
-        pygame.draw.circle(glow_surf, (180, 220, 255, glow_alpha),
-                           (glow_radius, glow_radius), glow_radius)
-        screen.blit(glow_surf, (sx - glow_radius, sy - glow_radius))
+        glow = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(
+            glow,
+            (180, 230, 255, glow_alpha),
+            (glow_radius, glow_radius),
+            glow_radius,
+        )
+        screen.blit(glow, (screen_x - glow_radius, screen_y - glow_radius))
 
-        # 中心白点
-        pygame.draw.circle(screen, (220, 240, 255), (sx, sy), 3)
+        pygame.draw.circle(screen, (232, 244, 255), (int(screen_x), int(screen_y)), 3)
 
-        # 箭头（指向目标方向）
         angle = guide.direction_angle
-        arrow_len = GUIDE_ARROW_LENGTH
-        # 箭头尖端
-        tip_x = sx + math.cos(angle) * arrow_len
-        tip_y = sy + math.sin(angle) * arrow_len
-        # 箭头尾部
-        tail_x = sx - math.cos(angle) * (arrow_len * 0.5)
-        tail_y = sy - math.sin(angle) * (arrow_len * 0.5)
-        # 箭头两侧
+        tip_x = screen_x + math.cos(angle) * GUIDE_ARROW_LENGTH
+        tip_y = screen_y + math.sin(angle) * GUIDE_ARROW_LENGTH
+        tail_x = screen_x - math.cos(angle) * (GUIDE_ARROW_LENGTH * 0.5)
+        tail_y = screen_y - math.sin(angle) * (GUIDE_ARROW_LENGTH * 0.5)
         left_angle = angle + math.pi * 0.75
         right_angle = angle - math.pi * 0.75
-        left_x = sx + math.cos(left_angle) * (arrow_len * 0.4)
-        left_y = sy + math.sin(left_angle) * (arrow_len * 0.4)
-        right_x = sx + math.cos(right_angle) * (arrow_len * 0.4)
-        right_y = sy + math.sin(right_angle) * (arrow_len * 0.4)
+        left_x = screen_x + math.cos(left_angle) * (GUIDE_ARROW_LENGTH * 0.42)
+        left_y = screen_y + math.sin(left_angle) * (GUIDE_ARROW_LENGTH * 0.42)
+        right_x = screen_x + math.cos(right_angle) * (GUIDE_ARROW_LENGTH * 0.42)
+        right_y = screen_y + math.sin(right_angle) * (GUIDE_ARROW_LENGTH * 0.42)
 
-        arrow_color = (180, 220, 255) if guide.target_type == "prey" else (255, 180, 140)
+        arrow_color = (186, 224, 255) if guide.target_type == "prey" else CLICK_EFFECT_ACCENT
         pygame.draw.line(screen, arrow_color, (tail_x, tail_y), (tip_x, tip_y), 2)
-        pygame.draw.line(screen, arrow_color, (sx, sy), (left_x, left_y), 2)
-        pygame.draw.line(screen, arrow_color, (sx, sy), (right_x, right_y), 2)
+        pygame.draw.line(screen, arrow_color, (screen_x, screen_y), (left_x, left_y), 2)
+        pygame.draw.line(screen, arrow_color, (screen_x, screen_y), (right_x, right_y), 2)
 
-    # ------------------------------------------------------------------
-    # 实体移除
-    # ------------------------------------------------------------------
+    def get_colliding_prey(self, head_x, head_y):
+        for prey in list(self.prey_list):
+            if math.hypot(head_x - prey.x, head_y - prey.y) < COLLISION_PREY:
+                return prey
+        return None
+
+    def get_colliding_skill_card(self, head_x, head_y):
+        for card in list(self.skill_cards):
+            if math.hypot(head_x - card.x, head_y - card.y) < SKILL_PICKUP_RADIUS:
+                return card
+        return None
+
+    def get_colliding_beast(self, head_x, head_y):
+        point = (head_x, head_y)
+        for beast in self.beast_list:
+            if beast.rect.inflate(SNAKE_HEAD_RADIUS * 2, SNAKE_HEAD_RADIUS * 2).collidepoint(point):
+                return beast
+        return None
+
+    def get_colliding_obstacle(self, head_x, head_y):
+        point = (head_x, head_y)
+        for obstacle in self.obstacle_list:
+            if obstacle.rect.inflate(SNAKE_HEAD_RADIUS * 2, SNAKE_HEAD_RADIUS * 2).collidepoint(point):
+                return obstacle
+        return None
+
+    def get_colliding_guide(self, head_x, head_y):
+        for guide in list(self.guide_list):
+            if not guide.visible:
+                continue
+            if math.hypot(head_x - guide.x, head_y - guide.y) < GUIDE_DISCOVER_RADIUS:
+                return guide
+        return None
 
     def remove_prey(self, prey):
         if prey in self.prey_list:
             self.prey_list.remove(prey)
 
+    def remove_skill_card(self, card):
+        if card in self.skill_cards:
+            self.skill_cards.remove(card)
+
+    def remove_obstacle(self, obstacle):
+        if obstacle in self.obstacle_list:
+            self.obstacle_list.remove(obstacle)
+
     def remove_guide(self, guide):
-        """移除指引并立即刷新一个新的"""
         if guide in self.guide_list:
             self._refresh_guide(guide)
 
+    def clear_beasts(self, beasts_to_remove):
+        self.beast_list = [beast for beast in self.beast_list if beast not in beasts_to_remove]
+
+    def visible_prey(self, point_visible_predicate):
+        return [prey for prey in self.prey_list if point_visible_predicate((prey.x, prey.y))]
+
+    def visible_beasts(self, rect_visible_predicate):
+        return [beast for beast in self.beast_list if rect_visible_predicate(beast.rect)]
+
     def reset(self, snake):
-        """重置所有实体（用于重新开始游戏）"""
         self.snake = snake
         self.prey_list.clear()
         self.beast_list.clear()
         self.guide_list.clear()
+        self.skill_cards.clear()
+        self.obstacle_list.clear()
         self._prey_timer = 0.0
+        self._skill_timer = 0.0
+        self._obstacle_timer = 0.0
         self._spawn_initial()

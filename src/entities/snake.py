@@ -1,83 +1,200 @@
-"""蛇模块 - 连续移动、平滑转向、饥饿系统、基于位置历史的身体跟随
-变更：
-- update 增加 is_moving 参数，只有移动时才更新头部和身体
-- 饥饿值始终随时间增长，不受移动状态影响
-- 停止时身体保持静止（不添加位置历史，无惯性滑动）
-"""
+"""Continuous snake model used by the adventure mode."""
+
+from __future__ import annotations
 
 import math
-from src.core.settings import *
+
+from src.core.settings import (
+    HEAD_VISION_RADIUS,
+    HUNGER_MAX,
+    HUNGER_PENALTY_RESET,
+    HUNGER_RATE,
+    INITIAL_WORLD_X,
+    INITIAL_WORLD_Y,
+    MAX_VISION_MULTIPLIER,
+    MAP_HEIGHT,
+    MAP_WIDTH,
+    SNAKE_BASE_SPEED,
+    SNAKE_HEAD_RADIUS,
+    SNAKE_INITIAL_LENGTH,
+    SNAKE_MIN_SPEED_FACTOR,
+    SNAKE_SEGMENT_SPACING,
+    SNAKE_SPEED_BOOST_DURATION,
+    SNAKE_SPEED_BOOST_MULTIPLIER,
+    SNAKE_TARGET_REACHED_DISTANCE,
+    SNAKE_TURN_SPEED,
+    SNAKE_VISION_SURGE_DURATION,
+    SNAKE_VISION_SURGE_MULTIPLIER,
+    VISION_GROWTH_PER_SEGMENT,
+)
 
 
 class Snake:
-    """连续移动的蛇，使用位置历史实现自然的身体跟随"""
+    """A smooth snake that moves toward a clicked world target."""
 
     def __init__(self):
-        # 身体段：segments[0] 是头部，每个段为 [x, y] 浮点数
         self.segments = []
-        start_x = INITIAL_WORLD_X
-        start_y = INITIAL_WORLD_Y
-        for i in range(SNAKE_INITIAL_LENGTH):
-            self.segments.append([
-                start_x - i * SNAKE_SEGMENT_SPACING,
-                float(start_y)
-            ])
-
-        self.angle = 0.0          # 当前朝向 (弧度, 0=右)
-        self.hunger = 0.0         # 饥饿值 0~100
-        self.alive = True         # 是否存活
-        self.moving = False       # 当前是否在移动（由 update 的 is_moving 参数同步）
-
-        # 位置历史：[[x, y, cumulative_distance], ...]
-        # 身体段通过回溯历史找到对应位置
-        self.position_history = [[start_x, start_y, 0.0]]
+        self.position_history = []
+        self.angle = 0.0
+        self.hunger = 0.0
+        self.alive = True
+        self.moving = False
+        self.target_point = None
+        self.speed_boost_timer = 0.0
+        self.vision_surge_timer = 0.0
+        self.reset()
 
     @property
     def head_pos(self):
-        """蛇头世界坐标 (x, y)"""
         return (self.segments[0][0], self.segments[0][1])
 
     @property
     def body_segments(self):
-        """所有身体段的世界坐标列表"""
         return self.segments
 
     @property
     def length(self):
-        """身体段数量"""
         return len(self.segments)
 
-    def update(self, dt, target_angle, is_moving):
-        """每帧更新蛇的状态。
-        dt: 帧间隔 (秒)
-        target_angle: 目标方向角 (弧度)
-        is_moving: bool — 本帧是否移动（按住空格键时由 InputHandler 传入）
-        """
+    @property
+    def current_speed(self):
+        hunger_ratio = self.hunger / HUNGER_MAX
+        speed_factor = 1.0 - (1.0 - SNAKE_MIN_SPEED_FACTOR) * hunger_ratio
+        speed = SNAKE_BASE_SPEED * speed_factor
+        if self.speed_boost_timer > 0:
+            speed *= SNAKE_SPEED_BOOST_MULTIPLIER
+        return speed
+
+    @property
+    def vision_multiplier(self):
+        if self.vision_surge_timer > 0:
+            return max(self.growth_vision_multiplier, SNAKE_VISION_SURGE_MULTIPLIER)
+        return self.growth_vision_multiplier
+
+    @property
+    def growth_vision_multiplier(self):
+        extra_segments = max(0, self.length - SNAKE_INITIAL_LENGTH)
+        return min(MAX_VISION_MULTIPLIER, 1.0 + extra_segments * VISION_GROWTH_PER_SEGMENT)
+
+    @property
+    def current_vision_radius(self):
+        return int(HEAD_VISION_RADIUS * self.vision_multiplier)
+
+    def reset(self):
+        self.segments = []
+        start_x = float(INITIAL_WORLD_X)
+        start_y = float(INITIAL_WORLD_Y)
+        for index in range(SNAKE_INITIAL_LENGTH):
+            self.segments.append([
+                start_x - index * SNAKE_SEGMENT_SPACING,
+                start_y,
+            ])
+
+        self.position_history = [[start_x, start_y, 0.0]]
+        self.angle = 0.0
+        self.hunger = 0.0
+        self.alive = True
+        self.moving = False
+        self.target_point = None
+        self.speed_boost_timer = 0.0
+        self.vision_surge_timer = 0.0
+
+    def set_target(self, world_x, world_y):
+        self.target_point = [
+            max(SNAKE_HEAD_RADIUS, min(MAP_WIDTH - SNAKE_HEAD_RADIUS, world_x)),
+            max(SNAKE_HEAD_RADIUS, min(MAP_HEIGHT - SNAKE_HEAD_RADIUS, world_y)),
+        ]
+
+    def clear_target(self):
+        self.target_point = None
+        self.moving = False
+
+    def apply_speed_boost(self, duration=SNAKE_SPEED_BOOST_DURATION):
+        self.speed_boost_timer = max(self.speed_boost_timer, duration)
+
+    def apply_vision_surge(self, duration=SNAKE_VISION_SURGE_DURATION):
+        self.vision_surge_timer = max(self.vision_surge_timer, duration)
+
+    def update(self, dt):
         if not self.alive:
             return
 
-        self.moving = is_moving   # 同步移动状态（供 HUD 等外部读取）
-
-        # --- 饥饿值始终更新，不受移动状态影响 ---
         self.hunger += HUNGER_RATE * dt
-        if self.hunger >= HUNGER_MAX:
+        while self.hunger >= HUNGER_MAX and self.alive:
             self._apply_hunger_penalty()
 
-        # --- 移动逻辑：只有 is_moving 为 True 时才更新位置 ---
-        if not is_moving:
-            return  # 不添加位置历史，身体段保持静止，无惯性滑动
+        if self.speed_boost_timer > 0:
+            self.speed_boost_timer = max(0.0, self.speed_boost_timer - dt)
+        if self.vision_surge_timer > 0:
+            self.vision_surge_timer = max(0.0, self.vision_surge_timer - dt)
 
-        # --- 1. 根据饥饿值计算实际移动速度 ---
-        hunger_ratio = self.hunger / HUNGER_MAX
-        speed_factor = 1.0 - (1.0 - SNAKE_MIN_SPEED_FACTOR) * hunger_ratio
-        current_speed = SNAKE_BASE_SPEED * speed_factor
+        if self.target_point is None:
+            self.moving = False
+            return
 
-        # --- 2. 平滑转向目标角度 ---
+        head_x, head_y = self.head_pos
+        target_x, target_y = self.target_point
+        dx_to_target = target_x - head_x
+        dy_to_target = target_y - head_y
+        direct_distance = math.hypot(dx_to_target, dy_to_target)
+
+        if direct_distance <= SNAKE_TARGET_REACHED_DISTANCE:
+            self.clear_target()
+            return
+
+        desired_angle = math.atan2(dy_to_target, dx_to_target)
+        self._turn_toward(desired_angle, dt)
+
+        travel_distance = min(self.current_speed * dt, direct_distance)
+        step_x = math.cos(self.angle) * travel_distance
+        step_y = math.sin(self.angle) * travel_distance
+
+        next_x = max(
+            SNAKE_HEAD_RADIUS,
+            min(MAP_WIDTH - SNAKE_HEAD_RADIUS, head_x + step_x),
+        )
+        next_y = max(
+            SNAKE_HEAD_RADIUS,
+            min(MAP_HEIGHT - SNAKE_HEAD_RADIUS, head_y + step_y),
+        )
+
+        actual_dx = next_x - head_x
+        actual_dy = next_y - head_y
+        actual_distance = math.hypot(actual_dx, actual_dy)
+
+        if actual_distance <= 0.001:
+            self.moving = False
+            return
+
+        self.moving = True
+        self.segments[0][0] = next_x
+        self.segments[0][1] = next_y
+
+        new_cumulative = self.position_history[-1][2] + actual_distance
+        self.position_history.append([next_x, next_y, new_cumulative])
+
+        max_needed = len(self.segments) * SNAKE_SEGMENT_SPACING + 240
+        while (
+            len(self.position_history) > 2
+            and (new_cumulative - self.position_history[0][2]) > max_needed
+        ):
+            self.position_history.pop(0)
+
+        for index in range(1, len(self.segments)):
+            target_dist = new_cumulative - index * SNAKE_SEGMENT_SPACING
+            if target_dist <= 0:
+                continue
+            sample = self._sample_history(target_dist)
+            if sample is not None:
+                self.segments[index][0] = sample[0]
+                self.segments[index][1] = sample[1]
+
+    def _turn_toward(self, target_angle, dt):
         angle_diff = target_angle - self.angle
         while angle_diff > math.pi:
-            angle_diff -= 2 * math.pi
+            angle_diff -= math.tau
         while angle_diff < -math.pi:
-            angle_diff += 2 * math.pi
+            angle_diff += math.tau
 
         max_turn = SNAKE_TURN_SPEED * dt
         if abs(angle_diff) <= max_turn:
@@ -86,99 +203,73 @@ class Snake:
             self.angle += max_turn * (1 if angle_diff > 0 else -1)
 
         while self.angle > math.pi:
-            self.angle -= 2 * math.pi
+            self.angle -= math.tau
         while self.angle < -math.pi:
-            self.angle += 2 * math.pi
-
-        # --- 3. 移动头部 ---
-        dx = math.cos(self.angle) * current_speed * dt
-        dy = math.sin(self.angle) * current_speed * dt
-        new_hx = self.segments[0][0] + dx
-        new_hy = self.segments[0][1] + dy
-
-        margin = SNAKE_HEAD_RADIUS
-        new_hx = max(margin, min(MAP_WIDTH - margin, new_hx))
-        new_hy = max(margin, min(MAP_HEIGHT - margin, new_hy))
-
-        dist_moved = math.sqrt(dx ** 2 + dy ** 2)
-        self.segments[0][0] = new_hx
-        self.segments[0][1] = new_hy
-
-        # --- 4. 记录位置历史 ---
-        new_cumulative = self.position_history[-1][2] + dist_moved
-        self.position_history.append([new_hx, new_hy, new_cumulative])
-
-        max_needed = len(self.segments) * SNAKE_SEGMENT_SPACING + 200
-        while (len(self.position_history) > 2 and
-               (new_cumulative - self.position_history[0][2]) > max_needed):
-            self.position_history.pop(0)
-
-        # --- 5. 身体段跟随（回溯位置历史） ---
-        for i in range(1, len(self.segments)):
-            target_dist = new_cumulative - i * SNAKE_SEGMENT_SPACING
-            if target_dist <= 0:
-                continue
-            pos = self._sample_history(target_dist)
-            if pos is not None:
-                self.segments[i][0] = pos[0]
-                self.segments[i][1] = pos[1]
+            self.angle += math.tau
 
     def _sample_history(self, target_dist):
-        """在位置历史中线性插值查找指定累积距离处的坐标"""
         if len(self.position_history) < 2:
             return None
 
-        for j in range(len(self.position_history) - 1):
-            d0 = self.position_history[j][2]
-            d1 = self.position_history[j + 1][2]
-            if d0 <= target_dist <= d1:
-                if d1 - d0 < 0.001:
-                    return (self.position_history[j][0], self.position_history[j][1])
-                t = (target_dist - d0) / (d1 - d0)
-                x = self.position_history[j][0] + (self.position_history[j+1][0] - self.position_history[j][0]) * t
-                y = self.position_history[j][1] + (self.position_history[j+1][1] - self.position_history[j][1]) * t
+        for index in range(len(self.position_history) - 1):
+            start = self.position_history[index]
+            end = self.position_history[index + 1]
+            if start[2] <= target_dist <= end[2]:
+                span = end[2] - start[2]
+                if span < 0.001:
+                    return (start[0], start[1])
+                ratio = (target_dist - start[2]) / span
+                x = start[0] + (end[0] - start[0]) * ratio
+                y = start[1] + (end[1] - start[1]) * ratio
                 return (x, y)
-
         return None
 
     def _apply_hunger_penalty(self):
-        """饥饿值满：长度减1，饥饿值重置为50。长度为0则死亡。"""
         if len(self.segments) > 1:
             self.segments.pop()
         else:
             self.alive = False
         self.hunger = HUNGER_PENALTY_RESET
+        if len(self.position_history) > 2:
+            self.position_history = self.position_history[-2:]
 
-    def reset(self):
-        """重置蛇到初始状态（用于重新开始游戏）"""
-        self.segments.clear()
-        start_x = INITIAL_WORLD_X
-        start_y = INITIAL_WORLD_Y
-        for i in range(SNAKE_INITIAL_LENGTH):
-            self.segments.append([
-                start_x - i * SNAKE_SEGMENT_SPACING,
-                float(start_y)
-            ])
-        self.angle = 0.0
-        self.hunger = 0.0
-        self.alive = True
-        self.moving = False
-        self.position_history = [[start_x, start_y, 0.0]]
+    def lose_segments(self, amount=1):
+        removed = 0
+        for _ in range(amount):
+            if len(self.segments) <= 1:
+                break
+            self.segments.pop()
+            removed += 1
+
+        if removed and len(self.position_history) > 2:
+            keep_history = len(self.segments) * SNAKE_SEGMENT_SPACING + 240
+            newest = self.position_history[-1][2]
+            while (
+                len(self.position_history) > 2
+                and (newest - self.position_history[0][2]) > keep_history
+            ):
+                self.position_history.pop(0)
+
+        return removed
 
     def grow(self, amount=1):
-        """增加身体段数"""
         for _ in range(amount):
-            last = self.segments[-1]
+            tail = self.segments[-1]
             if len(self.segments) > 1:
                 prev = self.segments[-2]
-                dx = last[0] - prev[0]
-                dy = last[1] - prev[1]
+                dx = tail[0] - prev[0]
+                dy = tail[1] - prev[1]
             else:
-                dx, dy = -SNAKE_SEGMENT_SPACING, 0
-            dist = math.sqrt(dx ** 2 + dy ** 2)
-            if dist < 1:
-                dx, dy = -SNAKE_SEGMENT_SPACING, 0
-                dist = SNAKE_SEGMENT_SPACING
-            new_x = last[0] + (dx / dist) * SNAKE_SEGMENT_SPACING
-            new_y = last[1] + (dy / dist) * SNAKE_SEGMENT_SPACING
-            self.segments.append([new_x, new_y])
+                dx = -SNAKE_SEGMENT_SPACING
+                dy = 0.0
+
+            distance = math.hypot(dx, dy)
+            if distance < 1.0:
+                dx = -SNAKE_SEGMENT_SPACING
+                dy = 0.0
+                distance = SNAKE_SEGMENT_SPACING
+
+            self.segments.append([
+                tail[0] + (dx / distance) * SNAKE_SEGMENT_SPACING,
+                tail[1] + (dy / distance) * SNAKE_SEGMENT_SPACING,
+            ])

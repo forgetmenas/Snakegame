@@ -1,44 +1,51 @@
-"""输入处理 - 支持菜单/游戏/结束三种状态的输入"""
+"""Adventure mode input handling."""
+
+from __future__ import annotations
 
 import pygame
-import math
-from src.core.settings import *
+
+from src.core.settings import MAP_HEIGHT, MAP_WIDTH, SNAKE_HEAD_RADIUS
+from src.systems.keybinds import action_pressed
 
 
 class InputHandler:
-    """处理玩家输入，支持状态机（menu / playing / gameover）"""
+    """Collects per-frame actions for the adventure mode."""
 
     def __init__(self):
-        self.target_angle = 0.0
-        self.angle_set = False
         self.quit = False
+        self.reset()
 
     def reset(self):
-        """重置输入状态（用于重新开始游戏）"""
-        self.target_angle = 0.0
-        self.angle_set = False
-        self.quit = False
+        self.restart = False
+        self.back_to_menu = False
+        self.pause_requested = False
+        self.activate_skill = False
+        self.target_point = None
+        self.click_world = None
 
-    def handle_events(self, events, snake_head_x, snake_head_y, camera):
-        """处理 playing 状态下的输入。
-        返回 is_moving (bool)
-        """
+    def handle_events(self, events, camera):
+        self.reset()
+
         for event in events:
             if event.type == pygame.QUIT:
                 self.quit = True
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+                if action_pressed(event, "quit"):
                     self.quit = True
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 3:  # 右键设置方向
-                    mouse_sx, mouse_sy = pygame.mouse.get_pos()
-                    world_x = mouse_sx + camera.offset[0]
-                    world_y = mouse_sy + camera.offset[1]
-                    dx = world_x - snake_head_x
-                    dy = world_y - snake_head_y
-                    self.target_angle = math.atan2(dy, dx)
-                    self.angle_set = True
+                elif action_pressed(event, "pause"):
+                    self.pause_requested = True
+                elif action_pressed(event, "restart"):
+                    self.restart = True
+                elif action_pressed(event, "menu"):
+                    self.back_to_menu = True
+                elif action_pressed(event, "activate_skill"):
+                    self.activate_skill = True
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                world_x = event.pos[0] + camera.offset[0]
+                world_y = event.pos[1] + camera.offset[1]
+                clamped_x = max(SNAKE_HEAD_RADIUS, min(MAP_WIDTH - SNAKE_HEAD_RADIUS, world_x))
+                clamped_y = max(SNAKE_HEAD_RADIUS, min(MAP_HEIGHT - SNAKE_HEAD_RADIUS, world_y))
+                self.target_point = (clamped_x, clamped_y)
+                self.click_world = (clamped_x, clamped_y)
 
-        keys = pygame.key.get_pressed()
-        is_moving = keys[pygame.K_SPACE] and self.angle_set
-        return is_moving
+        return self
