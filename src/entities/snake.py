@@ -1,4 +1,4 @@
-"""Continuous snake model used by the adventure mode."""
+"""Continuous snake model used by the adventure modes."""
 
 from __future__ import annotations
 
@@ -7,15 +7,18 @@ import math
 from src.core.settings import (
     HEAD_VISION_RADIUS,
     HUNGER_MAX,
-    HUNGER_PENALTY_RESET,
     HUNGER_RATE,
     INITIAL_WORLD_X,
     INITIAL_WORLD_Y,
-    MAX_VISION_MULTIPLIER,
     MAP_HEIGHT,
     MAP_WIDTH,
+    MAX_VISION_MULTIPLIER,
+    MIN_VISION_MULTIPLIER,
     SNAKE_BASE_SPEED,
+    SNAKE_BODY_COLOR_BRIGHT,
+    SNAKE_BODY_COLOR_DARK,
     SNAKE_HEAD_RADIUS,
+    SNAKE_HEAD_COLOR,
     SNAKE_INITIAL_LENGTH,
     SNAKE_MIN_SPEED_FACTOR,
     SNAKE_SEGMENT_SPACING,
@@ -25,14 +28,29 @@ from src.core.settings import (
     SNAKE_TURN_SPEED,
     SNAKE_VISION_SURGE_DURATION,
     SNAKE_VISION_SURGE_MULTIPLIER,
+    STARVATION_STEP_DISTANCE,
     VISION_GROWTH_PER_SEGMENT,
+    VISION_PENALTY_PER_MISSING_SEGMENT,
 )
 
 
 class Snake:
     """A smooth snake that moves toward a clicked world target."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        spawn_point: tuple[float, float] | None = None,
+        *,
+        body_color_bright=SNAKE_BODY_COLOR_BRIGHT,
+        body_color_dark=SNAKE_BODY_COLOR_DARK,
+        head_color=SNAKE_HEAD_COLOR,
+        max_vision=MAX_VISION_MULTIPLIER,
+    ):
+        self.spawn_point = spawn_point or (float(INITIAL_WORLD_X), float(INITIAL_WORLD_Y))
+        self.body_color_bright = body_color_bright
+        self.body_color_dark = body_color_dark
+        self.head_color = head_color
+        self.max_vision = max_vision
         self.segments = []
         self.position_history = []
         self.angle = 0.0
@@ -42,6 +60,9 @@ class Snake:
         self.target_point = None
         self.speed_boost_timer = 0.0
         self.vision_surge_timer = 0.0
+        self.starvation_distance = 0.0
+        self.damage_taken_this_frame = False
+        self.starvation_damage_applied = False
         self.reset()
 
     @property
@@ -73,8 +94,13 @@ class Snake:
 
     @property
     def growth_vision_multiplier(self):
-        extra_segments = max(0, self.length - SNAKE_INITIAL_LENGTH)
-        return min(MAX_VISION_MULTIPLIER, 1.0 + extra_segments * VISION_GROWTH_PER_SEGMENT)
+        if self.length >= SNAKE_INITIAL_LENGTH:
+            extra_segments = self.length - SNAKE_INITIAL_LENGTH
+            return min(self.max_vision, 1.0 + extra_segments * VISION_GROWTH_PER_SEGMENT)
+
+        missing_segments = SNAKE_INITIAL_LENGTH - self.length
+        penalty = missing_segments * VISION_PENALTY_PER_MISSING_SEGMENT
+        return max(MIN_VISION_MULTIPLIER, 1.0 - penalty)
 
     @property
     def current_vision_radius(self):
@@ -82,8 +108,7 @@ class Snake:
 
     def reset(self):
         self.segments = []
-        start_x = float(INITIAL_WORLD_X)
-        start_y = float(INITIAL_WORLD_Y)
+        start_x, start_y = self.spawn_point
         for index in range(SNAKE_INITIAL_LENGTH):
             self.segments.append([
                 start_x - index * SNAKE_SEGMENT_SPACING,
@@ -98,6 +123,9 @@ class Snake:
         self.target_point = None
         self.speed_boost_timer = 0.0
         self.vision_surge_timer = 0.0
+        self.starvation_distance = 0.0
+        self.damage_taken_this_frame = False
+        self.starvation_damage_applied = False
 
     def set_target(self, world_x, world_y):
         self.target_point = [
@@ -109,6 +137,10 @@ class Snake:
         self.target_point = None
         self.moving = False
 
+    def restore_satiety(self):
+        self.hunger = 0.0
+        self.starvation_distance = 0.0
+
     def apply_speed_boost(self, duration=SNAKE_SPEED_BOOST_DURATION):
         self.speed_boost_timer = max(self.speed_boost_timer, duration)
 
@@ -116,12 +148,13 @@ class Snake:
         self.vision_surge_timer = max(self.vision_surge_timer, duration)
 
     def update(self, dt):
+        self.damage_taken_this_frame = False
+        self.starvation_damage_applied = False
+
         if not self.alive:
             return
 
-        self.hunger += HUNGER_RATE * dt
-        while self.hunger >= HUNGER_MAX and self.alive:
-            self._apply_hunger_penalty()
+        self.hunger = min(HUNGER_MAX, self.hunger + HUNGER_RATE * dt)
 
         if self.speed_boost_timer > 0:
             self.speed_boost_timer = max(0.0, self.speed_boost_timer - dt)
@@ -189,6 +222,12 @@ class Snake:
                 self.segments[index][0] = sample[0]
                 self.segments[index][1] = sample[1]
 
+        if self.hunger >= HUNGER_MAX and self.alive:
+            self.starvation_distance += actual_distance
+            while self.starvation_distance >= STARVATION_STEP_DISTANCE and self.alive:
+                self.starvation_distance -= STARVATION_STEP_DISTANCE
+                self.apply_damage(1, source="starvation", can_defeat=True)
+
     def _turn_toward(self, target_angle, dt):
         angle_diff = target_angle - self.angle
         while angle_diff > math.pi:
@@ -224,32 +263,55 @@ class Snake:
                 return (x, y)
         return None
 
-    def _apply_hunger_penalty(self):
-        if len(self.segments) > 1:
-            self.segments.pop()
-        else:
-            self.alive = False
-        self.hunger = HUNGER_PENALTY_RESET
-        if len(self.position_history) > 2:
-            self.position_history = self.position_history[-2:]
+    def _trim_history(self):
+        if len(self.position_history) <= 2:
+            return
 
-    def lose_segments(self, amount=1):
+        keep_history = max(len(self.segments), 1) * SNAKE_SEGMENT_SPACING + 240
+        newest = self.position_history[-1][2]
+        while (
+            len(self.position_history) > 2
+            and (newest - self.position_history[0][2]) > keep_history
+        ):
+            self.position_history.pop(0)
+
+    def lose_segments(self, amount=1, *, can_defeat=False, source="damage"):
+        return self.apply_damage(amount, source=source, can_defeat=can_defeat)
+
+    def apply_damage(self, amount=1, *, source="damage", can_defeat=False):
+        if amount <= 0 or not self.alive:
+            return 0
+
         removed = 0
         for _ in range(amount):
-            if len(self.segments) <= 1:
-                break
-            self.segments.pop()
-            removed += 1
+            if len(self.segments) > 1:
+                self.segments.pop()
+                removed += 1
+                continue
+            if can_defeat:
+                self.alive = False
+                removed += 1
+            break
 
-        if removed and len(self.position_history) > 2:
-            keep_history = len(self.segments) * SNAKE_SEGMENT_SPACING + 240
-            newest = self.position_history[-1][2]
-            while (
-                len(self.position_history) > 2
-                and (newest - self.position_history[0][2]) > keep_history
-            ):
-                self.position_history.pop(0)
+        if removed > 0:
+            self.damage_taken_this_frame = True
+            self.starvation_damage_applied = source == "starvation"
+            self._trim_history()
+            if not self.alive:
+                self.clear_target()
 
+        return removed
+
+    def trim_from_collision(self, collision_index):
+        keep_count = max(1, collision_index)
+        removed = max(0, len(self.segments) - keep_count)
+        if removed <= 0:
+            return 0
+
+        self.segments = self.segments[:keep_count]
+        self.damage_taken_this_frame = True
+        self.starvation_damage_applied = False
+        self._trim_history()
         return removed
 
     def grow(self, amount=1):

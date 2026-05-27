@@ -147,8 +147,11 @@ class AdventureObstacle:
 class World:
     """Tracks prey, beasts, guides, and adventure mode skill cards."""
 
-    def __init__(self, snake_ref, sprite_bank):
+    def __init__(self, snake_ref, sprite_bank, other_snakes=None, config=None):
         self.snake = snake_ref
+        self.snakes = [snake_ref]
+        if other_snakes:
+            self.snakes.extend(other_snakes)
         self.sprite_bank = sprite_bank
         self.prey_list = []
         self.beast_list = []
@@ -158,6 +161,16 @@ class World:
         self._prey_timer = 0.0
         self._skill_timer = 0.0
         self._obstacle_timer = 0.0
+
+        cfg = config or {}
+        self._prey_target = cfg.get("prey_target", PREY_TARGET_COUNT)
+        self._prey_interval = cfg.get("prey_interval", PREY_REFRESH_INTERVAL)
+        self._skill_target = cfg.get("skill_target", SKILL_TARGET_COUNT)
+        self._skill_interval = cfg.get("skill_interval", SKILL_REFRESH_INTERVAL)
+        self._obstacle_max = cfg.get("obstacle_max", ADVENTURE_OBSTACLE_MAX_COUNT)
+        self._obstacle_lifetime = cfg.get("obstacle_lifetime", ADVENTURE_OBSTACLE_LIFETIME)
+        self._obstacle_interval = cfg.get("obstacle_interval", ADVENTURE_OBSTACLE_SPAWN_INTERVAL)
+
         self._spawn_initial()
 
     def _spawn_initial(self):
@@ -182,6 +195,18 @@ class World:
             size_tiles * WORLD_TILE_SIZE,
         )
 
+    def _set_snakes(self, snake_or_snakes):
+        if isinstance(snake_or_snakes, (list, tuple)):
+            snakes = list(snake_or_snakes)
+        else:
+            snakes = [snake_or_snakes]
+        self.snakes = [snake for snake in snakes if snake is not None]
+        if self.snakes:
+            self.snake = self.snakes[0]
+
+    def _head_positions(self):
+        return [snake.head_pos for snake in self.snakes if snake.segments]
+
     def _random_tile_slot(self, size_tiles, exclude_x, exclude_y, exclude_radius):
         max_x = WORLD_COLS - size_tiles
         max_y = WORLD_ROWS - size_tiles
@@ -191,6 +216,11 @@ class World:
             tile_y = random.randint(0, max_y)
             rect = self._tile_rect(tile_x, tile_y, size_tiles)
             if math.hypot(rect.centerx - exclude_x, rect.centery - exclude_y) <= exclude_radius:
+                continue
+            if any(
+                math.hypot(rect.centerx - head_x, rect.centery - head_y) <= exclude_radius
+                for head_x, head_y in self._head_positions()
+            ):
                 continue
             if self._rect_is_occupied(rect):
                 continue
@@ -237,11 +267,22 @@ class World:
             if rect.colliderect(guide_rect):
                 return True
 
+        for snake in self.snakes:
+            for segment in snake.segments:
+                segment_rect = pygame.Rect(
+                    int(segment[0] - SNAKE_HEAD_RADIUS - 4),
+                    int(segment[1] - SNAKE_HEAD_RADIUS - 4),
+                    (SNAKE_HEAD_RADIUS + 4) * 2,
+                    (SNAKE_HEAD_RADIUS + 4) * 2,
+                )
+                if rect.colliderect(segment_rect):
+                    return True
+
         return False
 
     def _spawn_prey_to_target(self):
         weights = [prey_type[1] for prey_type in PREY_TYPES]
-        while len(self.prey_list) < PREY_TARGET_COUNT:
+        while len(self.prey_list) < self._prey_target:
             slot = self._random_tile_slot(
                 1,
                 self.snake.head_pos[0],
@@ -258,7 +299,7 @@ class World:
 
     def _spawn_skill_cards_to_target(self):
         all_kinds = list(SKILL_TYPES.keys())
-        while len(self.skill_cards) < SKILL_TARGET_COUNT:
+        while len(self.skill_cards) < self._skill_target:
             slot = self._random_tile_slot(
                 1,
                 self.snake.head_pos[0],
@@ -320,7 +361,7 @@ class World:
         return True
 
     def _spawn_obstacle(self):
-        if len(self.obstacle_list) >= ADVENTURE_OBSTACLE_MAX_COUNT:
+        if len(self.obstacle_list) >= self._obstacle_max:
             return False
 
         width_tiles = random.randint(1, 2)
@@ -335,7 +376,7 @@ class World:
             return False
 
         self.obstacle_list.append(
-            AdventureObstacle(slot[0], slot[1], width_tiles, height_tiles)
+            AdventureObstacle(slot[0], slot[1], width_tiles, height_tiles, self._obstacle_lifetime)
         )
         return True
 
@@ -356,16 +397,16 @@ class World:
         self._spawn_beast()
 
     def update(self, dt, snake):
-        self.snake = snake
+        self._set_snakes(snake)
         self._prey_timer += dt
         self._skill_timer += dt
         self._obstacle_timer += dt
-        if self._prey_timer >= PREY_REFRESH_INTERVAL:
-            self._prey_timer -= PREY_REFRESH_INTERVAL
+        if self._prey_timer >= self._prey_interval:
+            self._prey_timer -= self._prey_interval
             self._spawn_prey_to_target()
 
-        if self._skill_timer >= SKILL_REFRESH_INTERVAL:
-            self._skill_timer -= SKILL_REFRESH_INTERVAL
+        if self._skill_timer >= self._skill_interval:
+            self._skill_timer -= self._skill_interval
             self._spawn_skill_cards_to_target()
 
         self._update_obstacles(dt)
@@ -376,9 +417,9 @@ class World:
             obstacle.lifetime -= dt
         self.obstacle_list = [obstacle for obstacle in self.obstacle_list if obstacle.lifetime > 0]
 
-        while self._obstacle_timer >= ADVENTURE_OBSTACLE_SPAWN_INTERVAL:
-            self._obstacle_timer -= ADVENTURE_OBSTACLE_SPAWN_INTERVAL
-            if len(self.obstacle_list) < ADVENTURE_OBSTACLE_MAX_COUNT:
+        while self._obstacle_timer >= self._obstacle_interval:
+            self._obstacle_timer -= self._obstacle_interval
+            if len(self.obstacle_list) < self._obstacle_max:
                 self._spawn_obstacle()
 
     def _update_guides(self, dt):
@@ -633,7 +674,7 @@ class World:
         return [beast for beast in self.beast_list if rect_visible_predicate(beast.rect)]
 
     def reset(self, snake):
-        self.snake = snake
+        self._set_snakes(snake)
         self.prey_list.clear()
         self.beast_list.clear()
         self.guide_list.clear()
