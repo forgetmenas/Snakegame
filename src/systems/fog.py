@@ -50,16 +50,22 @@ class FogOfWar:
             self.cookie_cache[radius] = self._create_cookie(radius)
         return self.cookie_cache[radius]
 
-    def update(self, head_pos, vision_radius):
+    def update(self, head_pos, vision_radius=None):
         self.light_mask.fill(FOG_COLOR)
-        cookie = self._get_cookie(vision_radius)
-        screen_x, screen_y = self.camera.world_to_screen(head_pos[0], head_pos[1])
-        size = cookie.get_width()
-        self.light_mask.blit(
-            cookie,
-            (screen_x - size // 2, screen_y - size // 2),
-            special_flags=pygame.BLEND_RGBA_MAX,
-        )
+        if vision_radius is None:
+            sources = list(head_pos)
+        else:
+            sources = [(head_pos, vision_radius)]
+
+        for point, radius in sources:
+            cookie = self._get_cookie(radius)
+            screen_x, screen_y = self.camera.world_to_screen(point[0], point[1])
+            size = cookie.get_width()
+            self.light_mask.blit(
+                cookie,
+                (screen_x - size // 2, screen_y - size // 2),
+                special_flags=pygame.BLEND_RGBA_MAX,
+            )
 
     def apply(self, screen):
         screen.blit(self.light_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)

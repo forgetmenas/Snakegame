@@ -14,6 +14,23 @@ from src.core.settings import (
     CLICK_EFFECT_ACCENT,
     CLICK_EFFECT_COLOR,
     CLICK_EFFECT_DURATION,
+    DUEL_ALERT_COLOR,
+    DUEL_ALERT_DURATION,
+    DUEL_AI_SPAWN,
+    DUEL_OVERLAY_COLOR,
+    DUEL_OVERLAY_EDGE,
+    DUEL_PLAYER_SPAWN,
+    DUEL_RESPAWN_DURATION,
+    DUEL_REVEAL_DURATION,
+    DUEL_AI_SPEED_FACTOR,
+    DUEL_MAX_VISION_MULTIPLIER,
+    DUEL_OBSTACLE_LIFETIME,
+    DUEL_OBSTACLE_MAX_COUNT,
+    DUEL_OBSTACLE_SPAWN_INTERVAL,
+    DUEL_PREY_REFRESH_INTERVAL,
+    DUEL_PREY_TARGET_COUNT,
+    DUEL_SKILL_REFRESH_INTERVAL,
+    DUEL_SKILL_TARGET_COUNT,
     FPS,
     GAMEOVER_TEXT_COLOR,
     GAMEOVER_TITLE_COLOR,
@@ -65,6 +82,7 @@ from src.core.settings import (
 )
 from src.entities.classic_mode import ClassicSnakeGame
 from src.entities.snake import Snake
+from src.entities.ai_snake import AISnake
 from src.entities.world import World
 from src.systems.audio import AudioManager
 from src.systems.camera import Camera
@@ -77,11 +95,14 @@ from src.systems.sprite_bank import SpriteBank
 STATE_MENU = "menu"
 STATE_ADVENTURE = "adventure"
 STATE_CLASSIC = "classic"
+STATE_DUEL = "duel"
 STATE_GAMEOVER = "gameover"
+STATE_DUEL_RESULT = "duel_result"
 STATE_PAUSED = "paused"
 
 MODE_CLASSIC = "classic"
 MODE_ADVENTURE = "adventure"
+MODE_DUEL = "duel"
 
 _body_circle_cache = {}
 _glow_circle_cache = {}
@@ -229,13 +250,16 @@ def draw_snake(screen, camera, snake):
     if not snake.segments:
         return
 
+    body_bright = snake.body_color_bright
+    body_dark = snake.body_color_dark
+    head_color = snake.head_color
     segment_count = len(snake.segments)
     for index, segment in enumerate(snake.segments):
         screen_x, screen_y = camera.world_to_screen(segment[0], segment[1])
         ratio = index / max(segment_count - 1, 1)
         radius = SNAKE_BODY_RADIUS_MAX - ratio * (SNAKE_BODY_RADIUS_MAX - SNAKE_BODY_RADIUS_MIN)
         radius = max(SNAKE_BODY_RADIUS_MIN, int(radius))
-        body_color = _lerp_color(SNAKE_BODY_COLOR_BRIGHT, SNAKE_BODY_COLOR_DARK, ratio)
+        body_color = _lerp_color(body_bright, body_dark, ratio)
         glow = _get_glow_circle(radius, body_color)
         screen.blit(glow, (screen_x - glow.get_width() // 2, screen_y - glow.get_height() // 2))
 
@@ -244,13 +268,13 @@ def draw_snake(screen, camera, snake):
         ratio = index / max(segment_count - 1, 1)
         radius = SNAKE_BODY_RADIUS_MAX - ratio * (SNAKE_BODY_RADIUS_MAX - SNAKE_BODY_RADIUS_MIN)
         radius = max(SNAKE_BODY_RADIUS_MIN, int(radius))
-        body_color = _lerp_color(SNAKE_BODY_COLOR_BRIGHT, SNAKE_BODY_COLOR_DARK, ratio)
+        body_color = _lerp_color(body_bright, body_dark, ratio)
         circle = _get_body_circle(radius, body_color)
         screen.blit(circle, (screen_x - circle.get_width() // 2, screen_y - circle.get_height() // 2))
 
     head_x, head_y = camera.world_to_screen(snake.segments[0][0], snake.segments[0][1])
-    head_glow = _get_glow_circle(SNAKE_HEAD_RADIUS, SNAKE_HEAD_COLOR)
-    head_circle = _get_body_circle(SNAKE_HEAD_RADIUS, SNAKE_HEAD_COLOR)
+    head_glow = _get_glow_circle(SNAKE_HEAD_RADIUS, head_color)
+    head_circle = _get_body_circle(SNAKE_HEAD_RADIUS, head_color)
     screen.blit(head_glow, (head_x - head_glow.get_width() // 2, head_y - head_glow.get_height() // 2))
     screen.blit(head_circle, (head_x - head_circle.get_width() // 2, head_y - head_circle.get_height() // 2))
 
@@ -341,15 +365,16 @@ def draw_text_centered(screen, font, text, color, y):
 
 
 def get_menu_button_rects():
-    gap = max(40, SCREEN_WIDTH // 24)
-    card_width = min(360, (SCREEN_WIDTH - gap - 140) // 2)
+    gap = max(30, SCREEN_WIDTH // 32)
+    card_width = min(320, (SCREEN_WIDTH - gap * 2 - 140) // 3)
     card_height = min(270, SCREEN_HEIGHT // 3)
-    total_width = card_width * 2 + gap
+    total_width = card_width * 3 + gap * 2
     start_x = (SCREEN_WIDTH - total_width) // 2
     top_y = int(SCREEN_HEIGHT * 0.34)
     return {
         MODE_CLASSIC: pygame.Rect(start_x, top_y, card_width, card_height),
         MODE_ADVENTURE: pygame.Rect(start_x + card_width + gap, top_y, card_width, card_height),
+        MODE_DUEL: pygame.Rect(start_x + (card_width + gap) * 2, top_y, card_width, card_height),
     }
 
 
@@ -361,7 +386,7 @@ def draw_menu(screen, title_font, body_font, small_font, number_font):
     screen.blit(panel, panel_rect.topleft)
 
     draw_text_centered(screen, title_font, "贪吃蛇双模式", MENU_TITLE_COLOR, max(72, SCREEN_HEIGHT // 10))
-    draw_text_centered(screen, body_font, "点击 1 / 2 或直接点击卡片进入对应玩法", MENU_TEXT_COLOR, max(160, SCREEN_HEIGHT // 5))
+    draw_text_centered(screen, body_font, "点击 1 / 2 / 3 或直接点击卡片进入对应玩法", MENU_TEXT_COLOR, max(160, SCREEN_HEIGHT // 5))
 
     buttons = get_menu_button_rects()
     card_info = {
@@ -371,7 +396,6 @@ def draw_menu(screen, title_font, body_font, small_font, number_font):
             "lines": [
                 "全屏障碍地图",
                 "方向键 / WASD 转向",
-                "撞墙、撞障碍、撞自己即结束",
             ],
         },
         MODE_ADVENTURE: {
@@ -380,7 +404,14 @@ def draw_menu(screen, title_font, body_font, small_font, number_font):
             "lines": [
                 "左键点地后自动游走",
                 "边界只能贴边，不会出图",
-                "空格释放当前技能卡",
+            ],
+        },
+        MODE_DUEL: {
+            "number": "3",
+            "title": "野兽对战",
+            "lines": [
+                "AI蛇对抗，蛇咬规则",
+                "吃食物后对方可见5秒",
             ],
         },
     }
@@ -399,7 +430,6 @@ def draw_menu(screen, title_font, body_font, small_font, number_font):
     footer_y = min(SCREEN_HEIGHT - 100, buttons[MODE_CLASSIC].bottom + 56)
     footer_lines = [
         "Q 在游戏中会进入暂停菜单；暂停后按 R 继续、M 回主界面、ESC 退出。",
-        "模式 2 的野兽占 2x2 格，技能卡占 1x1 格，贴图接口已保留。",
     ]
     for line in footer_lines:
         draw_text_centered(screen, small_font, line, MENU_HINT_COLOR, footer_y)
@@ -536,6 +566,27 @@ def init_adventure_objects(sprite_bank):
     return camera, snake, input_handler, fog, world
 
 
+def init_duel_objects(sprite_bank):
+    camera = Camera(MAP_WIDTH, MAP_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT)
+    player_snake = Snake(spawn_point=DUEL_PLAYER_SPAWN, max_vision=DUEL_MAX_VISION_MULTIPLIER)
+    ai_snake = AISnake()
+    input_handler = InputHandler()
+    fog = FogOfWar(SCREEN_WIDTH, SCREEN_HEIGHT, camera)
+    duel_config = {
+        "prey_target": DUEL_PREY_TARGET_COUNT,
+        "prey_interval": DUEL_PREY_REFRESH_INTERVAL,
+        "skill_target": DUEL_SKILL_TARGET_COUNT,
+        "skill_interval": DUEL_SKILL_REFRESH_INTERVAL,
+        "obstacle_max": DUEL_OBSTACLE_MAX_COUNT,
+        "obstacle_lifetime": DUEL_OBSTACLE_LIFETIME,
+        "obstacle_interval": DUEL_OBSTACLE_SPAWN_INTERVAL,
+    }
+    world = World(player_snake, sprite_bank, other_snakes=[ai_snake], config=duel_config)
+    camera.reset()
+    fog.update(player_snake.head_pos, player_snake.current_vision_radius)
+    return camera, player_snake, ai_snake, input_handler, fog, world
+
+
 def handle_adventure_collisions(snake, world, audio, held_skill):
     head_x, head_y = snake.head_pos
 
@@ -554,7 +605,8 @@ def handle_adventure_collisions(snake, world, audio, held_skill):
 
     obstacle = world.get_colliding_obstacle(head_x, head_y)
     if obstacle is not None:
-        snake.lose_segments(1)
+        if not snake.starvation_damage_applied:
+            snake.lose_segments(1, can_defeat=True)
         world.remove_obstacle(obstacle)
         audio.play_guide()
 
@@ -604,6 +656,7 @@ def start_mode(mode, sprite_bank):
             "state": STATE_ADVENTURE,
             "camera": camera,
             "snake": snake,
+            "ai_snake": None,
             "input_handler": input_handler,
             "fog": fog,
             "world": world,
@@ -613,12 +666,33 @@ def start_mode(mode, sprite_bank):
             "game_time": 0.0,
             "classic_game": None,
             "active_mode": MODE_ADVENTURE,
+            "duel_state": None,
+        }
+
+    if mode == MODE_DUEL:
+        camera, player_snake, ai_snake, input_handler, fog, world = init_duel_objects(sprite_bank)
+        return {
+            "state": STATE_DUEL,
+            "camera": camera,
+            "snake": player_snake,
+            "ai_snake": ai_snake,
+            "input_handler": input_handler,
+            "fog": fog,
+            "world": world,
+            "held_skill": None,
+            "click_effects": [],
+            "max_length": SNAKE_INITIAL_LENGTH,
+            "game_time": 0.0,
+            "classic_game": None,
+            "active_mode": MODE_DUEL,
+            "duel_state": DuelState(),
         }
 
     return {
         "state": STATE_CLASSIC,
         "camera": None,
         "snake": None,
+        "ai_snake": None,
         "input_handler": None,
         "fog": None,
         "world": None,
@@ -628,6 +702,7 @@ def start_mode(mode, sprite_bank):
         "game_time": 0.0,
         "classic_game": ClassicSnakeGame(),
         "active_mode": MODE_CLASSIC,
+        "duel_state": None,
     }
 
 
@@ -637,6 +712,7 @@ def _apply_mode_state(mode_state):
         mode_state["active_mode"],
         mode_state["camera"],
         mode_state["snake"],
+        mode_state["ai_snake"],
         mode_state["input_handler"],
         mode_state["fog"],
         mode_state["world"],
@@ -645,7 +721,256 @@ def _apply_mode_state(mode_state):
         mode_state["click_effects"],
         mode_state["max_length"],
         mode_state["game_time"],
+        mode_state["duel_state"],
     )
+
+
+class DuelState:
+    """Tracks duel-specific state: respawn timers, bite alerts, reveal timers."""
+
+    def __init__(self):
+        self.player_dead = False
+        self.ai_dead = False
+        self.player_respawn_timer = 0.0
+        self.ai_respawn_timer = 0.0
+        self.bite_alert_timer = 0.0
+        self.player_reveal_timer = 0.0
+        self.ai_reveal_timer = 0.0
+        self.player_death_text_timer = 0.0
+        self.ai_death_text_timer = 0.0
+        self.game_over = False
+        self.game_over_reason = ""
+        self.winner = None
+
+
+def check_snake_bite(attacker, victim):
+    """Check if attacker's head collides with victim's body. Returns index or -1."""
+    if not attacker.alive or not victim.segments:
+        return -1
+    head_x, head_y = attacker.head_pos
+    for i, seg in enumerate(victim.segments):
+        dist = math.hypot(head_x - seg[0], head_y - seg[1])
+        threshold = SNAKE_HEAD_RADIUS + (SNAKE_BODY_RADIUS_MAX if i == 0 else SNAKE_BODY_RADIUS_MIN + 4)
+        if dist < threshold:
+            return i
+    return -1
+
+
+def handle_duel_bite(attacker, victim, duel_state, is_player_attacker, sprite_bank):
+    """Process a snake bite: trim victim, kill attacker, set timers."""
+    collision_idx = check_snake_bite(attacker, victim)
+    if collision_idx < 0:
+        return False
+
+    if collision_idx == 0:
+        victim.trim_from_collision(1)
+    else:
+        victim.trim_from_collision(collision_idx)
+
+    attacker.alive = False
+    attacker.clear_target()
+
+    duel_state.bite_alert_timer = DUEL_ALERT_DURATION
+
+    if is_player_attacker:
+        duel_state.player_dead = True
+        duel_state.player_respawn_timer = DUEL_RESPAWN_DURATION
+        duel_state.player_death_text_timer = DUEL_RESPAWN_DURATION
+        duel_state.ai_reveal_timer = DUEL_REVEAL_DURATION
+    else:
+        duel_state.ai_dead = True
+        duel_state.ai_respawn_timer = DUEL_RESPAWN_DURATION
+        duel_state.ai_death_text_timer = DUEL_RESPAWN_DURATION
+        duel_state.player_reveal_timer = DUEL_REVEAL_DURATION
+
+    return True
+
+
+def respawn_snake(snake):
+    """Respawn a snake to initial state."""
+    snake.reset()
+    snake.alive = True
+
+
+def handle_duel_collisions(player_snake, ai_snake, world, audio, held_skill, duel_state):
+    """Handle all collisions in duel mode for both snakes."""
+    if player_snake.alive:
+        head_x, head_y = player_snake.head_pos
+        prey = world.get_colliding_prey(head_x, head_y)
+        if prey is not None:
+            player_snake.grow(prey.length_bonus)
+            player_snake.hunger = 0.0
+            world.remove_prey(prey)
+            world.add_beast()
+            audio.play_eat()
+            duel_state.ai_reveal_timer = DUEL_REVEAL_DURATION
+
+        beast = world.get_colliding_beast(head_x, head_y)
+        if beast is not None:
+            duel_state.game_over = True
+            duel_state.game_over_reason = "player_eaten"
+            duel_state.winner = "ai"
+            player_snake.alive = False
+            audio.play_death()
+
+        obstacle = world.get_colliding_obstacle(head_x, head_y)
+        if obstacle is not None:
+            if not player_snake.starvation_damage_applied:
+                player_snake.lose_segments(1, can_defeat=True)
+            world.remove_obstacle(obstacle)
+            audio.play_guide()
+            if not player_snake.alive:
+                duel_state.game_over = True
+                duel_state.game_over_reason = "player_obstacle"
+                duel_state.winner = "ai"
+
+        if held_skill is None:
+            skill_card = world.get_colliding_skill_card(head_x, head_y)
+            if skill_card is not None:
+                held_skill = skill_card.kind
+                world.remove_skill_card(skill_card)
+
+    if ai_snake.alive:
+        head_x, head_y = ai_snake.head_pos
+        prey = world.get_colliding_prey(head_x, head_y)
+        if prey is not None:
+            ai_snake.grow(prey.length_bonus)
+            ai_snake.hunger = 0.0
+            world.remove_prey(prey)
+            world.add_beast()
+            duel_state.player_reveal_timer = DUEL_REVEAL_DURATION
+
+        beast = world.get_colliding_beast(head_x, head_y)
+        if beast is not None:
+            duel_state.game_over = True
+            duel_state.game_over_reason = "ai_eaten"
+            duel_state.winner = "player"
+            ai_snake.alive = False
+
+        obstacle = world.get_colliding_obstacle(head_x, head_y)
+        if obstacle is not None:
+            if not ai_snake.starvation_damage_applied:
+                ai_snake.lose_segments(1, can_defeat=True)
+            world.remove_obstacle(obstacle)
+            if not ai_snake.alive:
+                duel_state.game_over = True
+                duel_state.game_over_reason = "ai_obstacle"
+                duel_state.winner = "player"
+
+    if player_snake.alive and ai_snake.alive:
+        if handle_duel_bite(player_snake, ai_snake, duel_state, True, None):
+            pass
+        elif handle_duel_bite(ai_snake, player_snake, duel_state, False, None):
+            pass
+
+    return held_skill
+
+
+def draw_duel_scene(screen, camera, world, player_snake, ai_snake, fog, click_effects, game_time, duel_state):
+    draw_background(screen, camera)
+    world.draw(screen, camera, game_time)
+    if player_snake.segments:
+        draw_snake(screen, camera, player_snake)
+    ai_visible = _is_ai_visible_in_duel(ai_snake, player_snake, duel_state)
+    if ai_snake.segments and ai_visible:
+        draw_snake(screen, camera, ai_snake)
+    fog.apply(screen)
+    if ai_snake.segments and ai_visible:
+        _draw_snake_over_fog(screen, camera, ai_snake)
+    for effect in click_effects:
+        effect.draw(screen, camera)
+
+
+def _is_ai_visible_in_duel(ai_snake, player_snake, duel_state):
+    if duel_state.ai_reveal_timer > 0:
+        return True
+    if not ai_snake.segments:
+        return False
+    for seg in ai_snake.segments:
+        dist = math.hypot(seg[0] - player_snake.head_pos[0], seg[1] - player_snake.head_pos[1])
+        if dist <= player_snake.current_vision_radius:
+            return True
+    return False
+
+
+def _draw_snake_over_fog(screen, camera, snake):
+    """Draw snake on top of fog layer so it's always visible when revealed."""
+    if not snake.segments:
+        return
+    body_bright = snake.body_color_bright
+    body_dark = snake.body_color_dark
+    head_color = snake.head_color
+    segment_count = len(snake.segments)
+
+    for index, segment in enumerate(snake.segments[1:], start=1):
+        screen_x, screen_y = camera.world_to_screen(segment[0], segment[1])
+        ratio = index / max(segment_count - 1, 1)
+        radius = SNAKE_BODY_RADIUS_MAX - ratio * (SNAKE_BODY_RADIUS_MAX - SNAKE_BODY_RADIUS_MIN)
+        radius = max(SNAKE_BODY_RADIUS_MIN, int(radius))
+        body_color = _lerp_color(body_bright, body_dark, ratio)
+        circle = _get_body_circle(radius, body_color)
+        screen.blit(circle, (screen_x - circle.get_width() // 2, screen_y - circle.get_height() // 2))
+
+    head_x, head_y = camera.world_to_screen(snake.segments[0][0], snake.segments[0][1])
+    head_circle = _get_body_circle(SNAKE_HEAD_RADIUS, head_color)
+    screen.blit(head_circle, (head_x - head_circle.get_width() // 2, head_y - head_circle.get_height() // 2))
+
+
+def draw_duel_hud(screen, player_snake, ai_snake, font, small_font, title_font, duel_state, held_skill, sprite_bank):
+    satiety_p = max(0.0, 100.0 - player_snake.hunger)
+    panel = pygame.Surface((HUD_WIDTH, HUD_HEIGHT), pygame.SRCALPHA)
+    panel.fill(HUD_PANEL_COLOR)
+    screen.blit(panel, (HUD_LEFT, HUD_TOP))
+    draw_satiety_bar(screen, HUD_LEFT + 18, HUD_TOP + 44, satiety_p)
+    screen.blit(font.render(f"玩家 饱腹度 {satiety_p:.0f}%", True, HUD_TEXT_COLOR), (HUD_LEFT + 18, HUD_TOP + 14))
+    screen.blit(font.render(f"长度 {player_snake.length}", True, HUD_TEXT_COLOR), (HUD_LEFT + 18, HUD_TOP + 72))
+    vis_text = f"视野 x{player_snake.vision_multiplier:.2f}"
+    screen.blit(small_font.render(vis_text, True, HUD_HINT_COLOR), (HUD_LEFT + 18, HUD_TOP + 102))
+
+    ai_panel_x = SCREEN_WIDTH - HUD_LEFT - HUD_WIDTH
+    satiety_a = max(0.0, 100.0 - ai_snake.hunger)
+    panel2 = pygame.Surface((HUD_WIDTH, HUD_HEIGHT), pygame.SRCALPHA)
+    panel2.fill(HUD_PANEL_COLOR)
+    screen.blit(panel2, (ai_panel_x, HUD_TOP))
+    draw_satiety_bar(screen, ai_panel_x + 18, HUD_TOP + 44, satiety_a)
+    screen.blit(font.render(f"AI蛇 饱腹度 {satiety_a:.0f}%", True, HUD_TEXT_COLOR), (ai_panel_x + 18, HUD_TOP + 14))
+    screen.blit(font.render(f"长度 {ai_snake.length}", True, HUD_TEXT_COLOR), (ai_panel_x + 18, HUD_TOP + 72))
+
+    if duel_state.bite_alert_timer > 0:
+        alpha = min(255, int(255 * (duel_state.bite_alert_timer / DUEL_ALERT_DURATION)))
+        alert_surf = title_font.render("蛇咬！！", True, DUEL_ALERT_COLOR)
+        alert_surf.set_alpha(alpha)
+        screen.blit(alert_surf, ((SCREEN_WIDTH - alert_surf.get_width()) // 2, 12))
+
+    if duel_state.player_dead and duel_state.player_respawn_timer > 0:
+        _draw_death_overlay(screen, title_font, font, duel_state.player_respawn_timer)
+
+    if held_skill is not None:
+        draw_held_skill(screen, held_skill, sprite_bank)
+
+
+def _draw_death_overlay(screen, title_font, body_font, timer):
+    overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    overlay.fill(DUEL_OVERLAY_COLOR)
+    screen.blit(overlay, (0, 0))
+    death_text = title_font.render("死亡", True, (255, 60, 60))
+    screen.blit(death_text, ((SCREEN_WIDTH - death_text.get_width()) // 2, SCREEN_HEIGHT // 2 - 60))
+    countdown = body_font.render(f"复活倒计时 {timer:.1f}s", True, (255, 200, 200))
+    screen.blit(countdown, ((SCREEN_WIDTH - countdown.get_width()) // 2, SCREEN_HEIGHT // 2 + 20))
+
+
+def draw_duel_result(screen, title_font, body_font, winner):
+    overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 176))
+    screen.blit(overlay, (0, 0))
+    if winner == "player":
+        text = "玩家获胜！"
+    elif winner == "ai":
+        text = "AI蛇获胜！"
+    else:
+        text = "平局！"
+    draw_text_centered(screen, title_font, text, MENU_TITLE_COLOR, SCREEN_HEIGHT // 3)
+    draw_text_centered(screen, body_font, "R 重新开始  M 返回主界面", HUD_TEXT_COLOR, SCREEN_HEIGHT // 2)
 
 
 def draw_adventure_scene(screen, camera, world, snake, fog, click_effects, game_time):
@@ -688,6 +1013,7 @@ def main():
     paused_mode = None
     camera = None
     snake = None
+    ai_snake = None
     input_handler = None
     fog = None
     world = None
@@ -696,6 +1022,7 @@ def main():
     click_effects = []
     max_length = SNAKE_INITIAL_LENGTH
     game_time = 0.0
+    duel_state = None
     running = True
 
     while running:
@@ -715,58 +1042,28 @@ def main():
                         running = False
                     elif action_pressed(event, "menu_classic"):
                         mode_state = start_mode(MODE_CLASSIC, sprite_bank)
-                        (
-                            state,
-                            active_mode,
-                            camera,
-                            snake,
-                            input_handler,
-                            fog,
-                            world,
-                            classic_game,
-                            held_skill,
-                            click_effects,
-                            max_length,
-                            game_time,
-                        ) = _apply_mode_state(mode_state)
+                        (state, active_mode, camera, snake, ai_snake, input_handler, fog, world,
+                         classic_game, held_skill, click_effects, max_length, game_time, duel_state) = _apply_mode_state(mode_state)
                     elif action_pressed(event, "menu_adventure"):
                         mode_state = start_mode(MODE_ADVENTURE, sprite_bank)
-                        (
-                            state,
-                            active_mode,
-                            camera,
-                            snake,
-                            input_handler,
-                            fog,
-                            world,
-                            classic_game,
-                            held_skill,
-                            click_effects,
-                            max_length,
-                            game_time,
-                        ) = _apply_mode_state(mode_state)
+                        (state, active_mode, camera, snake, ai_snake, input_handler, fog, world,
+                         classic_game, held_skill, click_effects, max_length, game_time, duel_state) = _apply_mode_state(mode_state)
+                    elif action_pressed(event, "menu_duel"):
+                        mode_state = start_mode(MODE_DUEL, sprite_bank)
+                        (state, active_mode, camera, snake, ai_snake, input_handler, fog, world,
+                         classic_game, held_skill, click_effects, max_length, game_time, duel_state) = _apply_mode_state(mode_state)
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if buttons[MODE_CLASSIC].collidepoint(event.pos):
                         mode_state = start_mode(MODE_CLASSIC, sprite_bank)
                     elif buttons[MODE_ADVENTURE].collidepoint(event.pos):
                         mode_state = start_mode(MODE_ADVENTURE, sprite_bank)
+                    elif buttons[MODE_DUEL].collidepoint(event.pos):
+                        mode_state = start_mode(MODE_DUEL, sprite_bank)
                     else:
                         mode_state = None
                     if mode_state is not None:
-                        (
-                            state,
-                            active_mode,
-                            camera,
-                            snake,
-                            input_handler,
-                            fog,
-                            world,
-                            classic_game,
-                            held_skill,
-                            click_effects,
-                            max_length,
-                            game_time,
-                        ) = _apply_mode_state(mode_state)
+                        (state, active_mode, camera, snake, ai_snake, input_handler, fog, world,
+                         classic_game, held_skill, click_effects, max_length, game_time, duel_state) = _apply_mode_state(mode_state)
             draw_menu(screen, title_font, body_font, small_font, number_font)
 
         elif state == STATE_ADVENTURE:
@@ -781,20 +1078,8 @@ def main():
             else:
                 if actions.restart:
                     mode_state = start_mode(MODE_ADVENTURE, sprite_bank)
-                    (
-                        state,
-                        active_mode,
-                        camera,
-                        snake,
-                        input_handler,
-                        fog,
-                        world,
-                        classic_game,
-                        held_skill,
-                        click_effects,
-                        max_length,
-                        game_time,
-                    ) = _apply_mode_state(mode_state)
+                    (state, active_mode, camera, snake, ai_snake, input_handler, fog, world,
+                     classic_game, held_skill, click_effects, max_length, game_time, duel_state) = _apply_mode_state(mode_state)
                 else:
                     if actions.target_point is not None:
                         snake.set_target(*actions.target_point)
@@ -842,10 +1127,77 @@ def main():
                     state = STATE_GAMEOVER
                 classic_game.draw(screen, body_font, small_font)
 
+        elif state == STATE_DUEL:
+            actions = input_handler.handle_events(events, camera)
+            if actions.quit:
+                running = False
+            elif actions.pause_requested:
+                paused_mode = MODE_DUEL
+                state = STATE_PAUSED
+            elif actions.back_to_menu:
+                winner = "player" if snake.length >= ai_snake.length else "ai"
+                if snake.length == ai_snake.length:
+                    winner = "draw"
+                duel_state.winner = winner
+                state = STATE_DUEL_RESULT
+            else:
+                if actions.restart:
+                    mode_state = start_mode(MODE_DUEL, sprite_bank)
+                    (state, active_mode, camera, snake, ai_snake, input_handler, fog, world,
+                     classic_game, held_skill, click_effects, max_length, game_time, duel_state) = _apply_mode_state(mode_state)
+                else:
+                    if duel_state.bite_alert_timer > 0:
+                        duel_state.bite_alert_timer -= dt
+                    if duel_state.player_reveal_timer > 0:
+                        duel_state.player_reveal_timer -= dt
+                    if duel_state.ai_reveal_timer > 0:
+                        duel_state.ai_reveal_timer -= dt
+
+                    if duel_state.player_dead:
+                        duel_state.player_respawn_timer -= dt
+                        if duel_state.player_respawn_timer <= 0:
+                            duel_state.player_dead = False
+                            respawn_snake(snake)
+                            duel_state.player_reveal_timer = DUEL_REVEAL_DURATION
+                    else:
+                        if actions.target_point is not None and snake.alive:
+                            snake.set_target(*actions.target_point)
+                            click_effects.append(ClickEffect(*actions.click_world))
+                        if actions.activate_skill and held_skill is not None:
+                            if activate_held_skill(held_skill, snake, world, audio):
+                                held_skill = None
+                        snake.update(dt)
+
+                    if duel_state.ai_dead:
+                        duel_state.ai_respawn_timer -= dt
+                        if duel_state.ai_respawn_timer <= 0:
+                            duel_state.ai_dead = False
+                            respawn_snake(ai_snake)
+                            duel_state.ai_reveal_timer = DUEL_REVEAL_DURATION
+                    else:
+                        ai_snake.ai_update(dt, world, snake)
+
+                    camera.update(snake.head_pos[0], snake.head_pos[1], dt)
+                    world.update(dt, [snake, ai_snake])
+                    held_skill = handle_duel_collisions(snake, ai_snake, world, audio, held_skill, duel_state)
+                    fog.update(snake.head_pos, snake.current_vision_radius)
+                    click_effects = [e for e in click_effects if e.update(dt)]
+                    game_time += dt
+                    max_length = max(max_length, snake.length)
+
+                    if duel_state.game_over:
+                        state = STATE_GAMEOVER
+
+            draw_duel_scene(screen, camera, world, snake, ai_snake, fog, click_effects, game_time, duel_state)
+            draw_duel_hud(screen, snake, ai_snake, body_font, small_font, title_font, duel_state, held_skill, sprite_bank)
+
         elif state == STATE_PAUSED:
             if paused_mode == MODE_ADVENTURE:
                 draw_adventure_scene(screen, camera, world, snake, fog, click_effects, game_time)
                 draw_adventure_hud(screen, snake, body_font, small_font, max_length, held_skill, sprite_bank)
+            elif paused_mode == MODE_DUEL:
+                draw_duel_scene(screen, camera, world, snake, ai_snake, fog, click_effects, game_time, duel_state)
+                draw_duel_hud(screen, snake, ai_snake, body_font, small_font, title_font, duel_state, held_skill, sprite_bank)
             else:
                 classic_game.draw(screen, body_font, small_font)
 
@@ -856,17 +1208,41 @@ def main():
                     running = False
                 elif event.type == pygame.KEYDOWN:
                     if action_pressed(event, "resume"):
-                        state = STATE_ADVENTURE if paused_mode == MODE_ADVENTURE else STATE_CLASSIC
+                        if paused_mode == MODE_ADVENTURE:
+                            state = STATE_ADVENTURE
+                        elif paused_mode == MODE_DUEL:
+                            state = STATE_DUEL
+                        else:
+                            state = STATE_CLASSIC
                     elif action_pressed(event, "menu"):
-                        state = STATE_MENU
+                        if paused_mode == MODE_DUEL and duel_state is not None:
+                            winner = "player" if snake.length >= ai_snake.length else "ai"
+                            if snake.length == ai_snake.length:
+                                winner = "draw"
+                            duel_state.winner = winner
+                            state = STATE_DUEL_RESULT
+                        else:
+                            state = STATE_MENU
                     elif action_pressed(event, "quit"):
                         running = False
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     buttons = get_pause_button_rects()
                     if buttons["resume"].collidepoint(event.pos):
-                        state = STATE_ADVENTURE if paused_mode == MODE_ADVENTURE else STATE_CLASSIC
+                        if paused_mode == MODE_ADVENTURE:
+                            state = STATE_ADVENTURE
+                        elif paused_mode == MODE_DUEL:
+                            state = STATE_DUEL
+                        else:
+                            state = STATE_CLASSIC
                     elif buttons["menu"].collidepoint(event.pos):
-                        state = STATE_MENU
+                        if paused_mode == MODE_DUEL and duel_state is not None:
+                            winner = "player" if snake.length >= ai_snake.length else "ai"
+                            if snake.length == ai_snake.length:
+                                winner = "draw"
+                            duel_state.winner = winner
+                            state = STATE_DUEL_RESULT
+                        else:
+                            state = STATE_MENU
                     elif buttons["quit"].collidepoint(event.pos):
                         running = False
 
@@ -874,10 +1250,15 @@ def main():
             if active_mode == MODE_ADVENTURE:
                 draw_adventure_scene(screen, camera, world, snake, fog, click_effects, game_time)
                 draw_adventure_hud(screen, snake, body_font, small_font, max_length, held_skill, sprite_bank)
+            elif active_mode == MODE_DUEL:
+                draw_duel_scene(screen, camera, world, snake, ai_snake, fog, click_effects, game_time, duel_state)
+                draw_duel_hud(screen, snake, ai_snake, body_font, small_font, title_font, duel_state, held_skill, sprite_bank)
+                draw_duel_result(screen, title_font, body_font, duel_state.winner)
             else:
                 classic_game.draw(screen, body_font, small_font)
 
-            draw_gameover(screen, title_font, body_font, active_mode, snake, max_length, classic_game)
+            if active_mode != MODE_DUEL:
+                draw_gameover(screen, title_font, body_font, active_mode, snake, max_length, classic_game)
 
             for event in events:
                 if event.type == pygame.QUIT:
@@ -887,20 +1268,24 @@ def main():
                         running = False
                     elif action_pressed(event, "restart"):
                         mode_state = start_mode(active_mode, sprite_bank)
-                        (
-                            state,
-                            active_mode,
-                            camera,
-                            snake,
-                            input_handler,
-                            fog,
-                            world,
-                            classic_game,
-                            held_skill,
-                            click_effects,
-                            max_length,
-                            game_time,
-                        ) = _apply_mode_state(mode_state)
+                        (state, active_mode, camera, snake, ai_snake, input_handler, fog, world,
+                         classic_game, held_skill, click_effects, max_length, game_time, duel_state) = _apply_mode_state(mode_state)
+                    elif action_pressed(event, "menu"):
+                        state = STATE_MENU
+
+        elif state == STATE_DUEL_RESULT:
+            draw_duel_scene(screen, camera, world, snake, ai_snake, fog, click_effects, game_time, duel_state)
+            draw_duel_result(screen, title_font, body_font, duel_state.winner if duel_state else "draw")
+            for event in events:
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN:
+                    if action_pressed(event, "quit"):
+                        running = False
+                    elif action_pressed(event, "restart"):
+                        mode_state = start_mode(MODE_DUEL, sprite_bank)
+                        (state, active_mode, camera, snake, ai_snake, input_handler, fog, world,
+                         classic_game, held_skill, click_effects, max_length, game_time, duel_state) = _apply_mode_state(mode_state)
                     elif action_pressed(event, "menu"):
                         state = STATE_MENU
 

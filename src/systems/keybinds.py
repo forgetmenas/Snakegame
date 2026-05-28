@@ -18,6 +18,7 @@ SCANCODE_SETS = {
     "W": (17, 26),
     "1": (2, 30),
     "2": (3, 31),
+    "3": (4, 32),
     "ESCAPE": (1, 41),
     "SPACE": (57, 44),
     "RIGHT": (77, 79),
@@ -39,6 +40,7 @@ ACTION_BINDINGS = {
     "quit": _binding(keys=(pygame.K_ESCAPE,), scancodes=SCANCODE_SETS["ESCAPE"]),
     "menu_classic": _binding(keys=(pygame.K_1, pygame.K_KP1), scancodes=SCANCODE_SETS["1"], chars=("1",)),
     "menu_adventure": _binding(keys=(pygame.K_2, pygame.K_KP2), scancodes=SCANCODE_SETS["2"], chars=("2",)),
+    "menu_duel": _binding(keys=(pygame.K_3, pygame.K_KP3), scancodes=SCANCODE_SETS["3"], chars=("3",)),
     "pause": _binding(keys=(pygame.K_q,), scancodes=SCANCODE_SETS["Q"], chars=("q",)),
     "resume": _binding(
         keys=(pygame.K_r, pygame.K_q, pygame.K_c),
