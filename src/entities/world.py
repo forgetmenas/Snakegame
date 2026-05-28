@@ -554,6 +554,7 @@ class World:
             beast.sprite_path,
             (sprite_rect.width, sprite_rect.height),
             beast.color,
+            padding_ratio=0.06,
         )
         screen.blit(sprite, sprite_rect.topleft)
 
@@ -578,7 +579,12 @@ class World:
         icon_size = max(WORLD_TILE_SIZE - 20, 20)
         icon_rect = pygame.Rect(0, 0, icon_size, icon_size)
         icon_rect.center = center
-        icon = self.sprite_bank.get(card.sprite_path, icon_rect.size, card.color)
+        icon = self.sprite_bank.get(
+            card.sprite_path,
+            icon_rect.size,
+            card.color,
+            padding_ratio=0.12,
+        )
         screen.blit(icon, icon_rect.topleft)
 
     def _draw_guide(self, screen, screen_x, screen_y, guide, time):

@@ -355,7 +355,12 @@ def draw_held_skill(screen, held_skill, sprite_bank):
     icon_size = max(rect.width - 30, 26)
     icon_rect = pygame.Rect(0, 0, icon_size, icon_size)
     icon_rect.center = center
-    icon = sprite_bank.get(config["path"], icon_rect.size, config["color"])
+    icon = sprite_bank.get(
+        config["path"],
+        icon_rect.size,
+        config["color"],
+        padding_ratio=0.12,
+    )
     screen.blit(icon, icon_rect.topleft)
 
 

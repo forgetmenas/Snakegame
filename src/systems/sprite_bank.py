@@ -13,10 +13,17 @@ class SpriteBank:
     def __init__(self):
         self._cache = {}
 
-    def get(self, path: str, size: tuple[int, int], fallback_color: tuple[int, int, int]):
-        key = (path, size)
+    def get(
+        self,
+        path: str,
+        size: tuple[int, int],
+        fallback_color: tuple[int, int, int],
+        *,
+        padding_ratio: float = 0.0,
+    ):
+        key = (path, size, round(padding_ratio, 3))
         if key not in self._cache:
-            self._cache[key] = self._load_or_placeholder(path, size, fallback_color)
+            self._cache[key] = self._load_or_placeholder(path, size, fallback_color, padding_ratio)
         return self._cache[key]
 
     def _load_or_placeholder(
@@ -24,14 +31,42 @@ class SpriteBank:
         path: str,
         size: tuple[int, int],
         fallback_color: tuple[int, int, int],
+        padding_ratio: float,
     ):
         if path and os.path.exists(path):
             try:
                 image = pygame.image.load(path).convert_alpha()
-                return pygame.transform.smoothscale(image, size)
+                return self._fit_image(image, size, padding_ratio)
             except pygame.error:
                 pass
         return self._build_placeholder(size, fallback_color)
+
+    def _fit_image(self, image, size: tuple[int, int], padding_ratio: float):
+        width, height = size
+        if width <= 0 or height <= 0:
+            return pygame.Surface((max(width, 1), max(height, 1)), pygame.SRCALPHA)
+
+        pad_x = max(0, int(width * padding_ratio))
+        pad_y = max(0, int(height * padding_ratio))
+        target_width = max(1, width - pad_x * 2)
+        target_height = max(1, height - pad_y * 2)
+
+        image_width, image_height = image.get_size()
+        if image_width <= 0 or image_height <= 0:
+            return self._build_placeholder(size, (180, 180, 180))
+
+        scale_ratio = min(target_width / image_width, target_height / image_height)
+        scaled_size = (
+            max(1, int(image_width * scale_ratio)),
+            max(1, int(image_height * scale_ratio)),
+        )
+        scaled = pygame.transform.smoothscale(image, scaled_size)
+
+        surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        draw_x = (width - scaled_size[0]) // 2
+        draw_y = (height - scaled_size[1]) // 2
+        surface.blit(scaled, (draw_x, draw_y))
+        return surface
 
     def _build_placeholder(self, size: tuple[int, int], color: tuple[int, int, int]):
         width, height = size
