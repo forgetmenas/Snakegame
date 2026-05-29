@@ -26,14 +26,20 @@ from src.entities.snake import Snake
 
 
 class AISnake(Snake):
-    """Snake driven by simple AI: seek prey, avoid beasts, attack player."""
+    """Snake driven by simple AI: seek prey, avoid beasts, attack other snakes."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        spawn_point=None,
+        body_color_bright=AI_SNAKE_BODY_COLOR_BRIGHT,
+        body_color_dark=AI_SNAKE_BODY_COLOR_DARK,
+        head_color=AI_SNAKE_HEAD_COLOR,
+    ):
         super().__init__(
-            spawn_point=DUEL_AI_SPAWN,
-            body_color_bright=AI_SNAKE_BODY_COLOR_BRIGHT,
-            body_color_dark=AI_SNAKE_BODY_COLOR_DARK,
-            head_color=AI_SNAKE_HEAD_COLOR,
+            spawn_point=spawn_point or DUEL_AI_SPAWN,
+            body_color_bright=body_color_bright,
+            body_color_dark=body_color_dark,
+            head_color=head_color,
         )
         self._target_timer = 0.0
         self._wander_target = None
@@ -47,18 +53,23 @@ class AISnake(Snake):
             speed *= SNAKE_SPEED_BOOST_MULTIPLIER
         return speed
 
-    def ai_update(self, dt, world, player_snake):
+    def ai_update(self, dt, world, target_snakes):
+        """Update AI. target_snakes can be a single snake or a list of snakes to attack."""
+        if isinstance(target_snakes, (list, tuple)):
+            enemies = [s for s in target_snakes if s is not self]
+        else:
+            enemies = [target_snakes]
         self._target_timer += dt
         if self._target_timer >= AI_TARGET_REFRESH_INTERVAL:
             self._target_timer = 0.0
-            self._pick_target(world, player_snake)
+            self._pick_target(world, enemies)
 
         if self._wander_target is not None:
             self.set_target(*self._wander_target)
 
         self.update(dt)
 
-    def _pick_target(self, world, player_snake):
+    def _pick_target(self, world, enemies):
         head_x, head_y = self.head_pos
 
         danger_zones = []
@@ -68,14 +79,19 @@ class AISnake(Snake):
             r = obstacle.rect
             danger_zones.append((r.centerx, r.centery, max(r.width, r.height)))
 
-        if player_snake.alive and player_snake.length > 1:
-            player_dist = math.hypot(
-                player_snake.head_pos[0] - head_x,
-                player_snake.head_pos[1] - head_y,
+        alive_enemies = [s for s in enemies if s.alive and s.length > 1]
+        if alive_enemies and random.random() < 0.6:
+            nearest_enemy = min(
+                alive_enemies,
+                key=lambda s: math.hypot(s.head_pos[0] - head_x, s.head_pos[1] - head_y),
             )
-            if player_dist < 800 and random.random() < 0.5:
-                target_idx = min(2, len(player_snake.segments) - 1)
-                seg = player_snake.segments[target_idx]
+            enemy_dist = math.hypot(
+                nearest_enemy.head_pos[0] - head_x,
+                nearest_enemy.head_pos[1] - head_y,
+            )
+            if enemy_dist < 1000:
+                target_idx = min(2, len(nearest_enemy.segments) - 1)
+                seg = nearest_enemy.segments[target_idx]
                 self._wander_target = (seg[0], seg[1])
                 return
 
