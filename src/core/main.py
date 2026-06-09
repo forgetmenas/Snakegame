@@ -93,6 +93,21 @@ from src.entities.classic_mode import ClassicSnakeGame
 from src.entities.snake import Snake
 from src.entities.ai_snake import AISnake
 from src.entities.world import World
+from src.network.multiplayer import (
+    DEFAULT_MULTIPLAYER_PORT,
+    MultiplayerClient,
+    MultiplayerSceneState,
+    MultiplayerServer,
+    draw_multiplayer_lobby,
+    draw_multiplayer_pause_overlay,
+    draw_multiplayer_result,
+    draw_multiplayer_score_panel,
+    draw_multiplayer_setup,
+    draw_multiplayer_status_text,
+    get_hostname_name,
+    get_local_ip_addresses,
+    parse_host_port,
+)
 from src.systems.audio import AudioManager
 from src.systems.camera import Camera
 from src.systems.fog import FogOfWar
@@ -105,6 +120,10 @@ STATE_MENU = "menu"
 STATE_ADVENTURE = "adventure"
 STATE_CLASSIC = "classic"
 STATE_DUEL = "duel"
+STATE_MULTIPLAYER_SETUP = "multiplayer_setup"
+STATE_MULTIPLAYER_LOBBY = "multiplayer_lobby"
+STATE_MULTIPLAYER = "multiplayer"
+STATE_MULTIPLAYER_RESULT = "multiplayer_result"
 STATE_GAMEOVER = "gameover"
 STATE_DUEL_RESULT = "duel_result"
 STATE_PAUSED = "paused"
@@ -112,6 +131,7 @@ STATE_PAUSED = "paused"
 MODE_CLASSIC = "classic"
 MODE_ADVENTURE = "adventure"
 MODE_DUEL = "duel"
+MODE_MULTIPLAYER = "multiplayer"
 
 _body_circle_cache = {}
 _glow_circle_cache = {}
@@ -379,16 +399,19 @@ def draw_text_centered(screen, font, text, color, y):
 
 
 def get_menu_button_rects():
-    gap = max(30, SCREEN_WIDTH // 32)
-    card_width = min(320, (SCREEN_WIDTH - gap * 2 - 140) // 3)
-    card_height = min(270, SCREEN_HEIGHT // 3)
-    total_width = card_width * 3 + gap * 2
+    gap_x = max(34, SCREEN_WIDTH // 28)
+    gap_y = max(28, SCREEN_HEIGHT // 24)
+    card_width = min(360, (SCREEN_WIDTH - 220 - gap_x) // 2)
+    card_height = min(240, (SCREEN_HEIGHT - 280 - gap_y) // 2)
+    total_width = card_width * 2 + gap_x
+    total_height = card_height * 2 + gap_y
     start_x = (SCREEN_WIDTH - total_width) // 2
-    top_y = int(SCREEN_HEIGHT * 0.34)
+    top_y = max(220, (SCREEN_HEIGHT - total_height) // 2 - 10)
     return {
         MODE_CLASSIC: pygame.Rect(start_x, top_y, card_width, card_height),
-        MODE_ADVENTURE: pygame.Rect(start_x + card_width + gap, top_y, card_width, card_height),
-        MODE_DUEL: pygame.Rect(start_x + (card_width + gap) * 2, top_y, card_width, card_height),
+        MODE_ADVENTURE: pygame.Rect(start_x + card_width + gap_x, top_y, card_width, card_height),
+        MODE_DUEL: pygame.Rect(start_x, top_y + card_height + gap_y, card_width, card_height),
+        MODE_MULTIPLAYER: pygame.Rect(start_x + card_width + gap_x, top_y + card_height + gap_y, card_width, card_height),
     }
 
 
@@ -399,8 +422,8 @@ def draw_menu(screen, title_font, body_font, small_font, number_font):
     panel.fill(MENU_PANEL_COLOR)
     screen.blit(panel, panel_rect.topleft)
 
-    draw_text_centered(screen, title_font, "贪吃蛇双模式", MENU_TITLE_COLOR, max(72, SCREEN_HEIGHT // 10))
-    draw_text_centered(screen, body_font, "点击 1 / 2 / 3 或直接点击卡片进入对应玩法", MENU_TEXT_COLOR, max(160, SCREEN_HEIGHT // 5))
+    draw_text_centered(screen, title_font, "贪吃蛇多模式", MENU_TITLE_COLOR, max(72, SCREEN_HEIGHT // 10))
+    draw_text_centered(screen, body_font, "点击 1 / 2 / 3 / 4 或直接点击卡片进入对应玩法", MENU_TEXT_COLOR, max(160, SCREEN_HEIGHT // 5))
 
     buttons = get_menu_button_rects()
     card_info = {
@@ -422,10 +445,18 @@ def draw_menu(screen, title_font, body_font, small_font, number_font):
         },
         MODE_DUEL: {
             "number": "3",
-            "title": "野兽对战",
+            "title": "AI野兽对战",
             "lines": [
                 "AI蛇对抗，蛇咬规则",
                 "吃食物后对方可见5秒",
+            ],
+        },
+        MODE_MULTIPLAYER: {
+            "number": "4",
+            "title": "多人野兽",
+            "lines": [
+                "主机建房，任意人数加入",
+                "蛇名自动使用各自主机名",
             ],
         },
     }
@@ -434,20 +465,28 @@ def draw_menu(screen, title_font, body_font, small_font, number_font):
         pygame.draw.rect(screen, MENU_CARD_COLOR, rect, border_radius=22)
         pygame.draw.rect(screen, MENU_CARD_BORDER, rect, width=3, border_radius=22)
         screen.blit(number_font.render(card_info[mode]["number"], True, MENU_TITLE_COLOR), (rect.x + 26, rect.y + 18))
-        screen.blit(body_font.render(card_info[mode]["title"], True, MENU_TEXT_COLOR), (rect.x + 26, rect.y + 118))
+        screen.blit(body_font.render(card_info[mode]["title"], True, MENU_TEXT_COLOR), (rect.x + 26, rect.y + 98))
 
-        y = rect.y + 170
+        y = rect.y + 152
         for line in card_info[mode]["lines"]:
             screen.blit(small_font.render(line, True, MENU_HINT_COLOR), (rect.x + 26, y))
             y += 30
 
-    footer_y = min(SCREEN_HEIGHT - 100, buttons[MODE_CLASSIC].bottom + 56)
+    footer_y = SCREEN_HEIGHT - small_font.get_height() - 18
     footer_lines = [
-        "Q 在游戏中会进入暂停菜单；暂停后按 R 继续、M 回主界面、ESC 退出。",
+        "Q 在游戏中打开菜单；暂停后按 R 继续，M 返回主页，ESC 退出。",
     ]
     for line in footer_lines:
         draw_text_centered(screen, small_font, line, MENU_HINT_COLOR, footer_y)
         footer_y += 30
+
+
+def get_multiplayer_setup_rects():
+    host_button = pygame.Rect(SCREEN_WIDTH // 2 - 330, 260, 260, 92)
+    join_button = pygame.Rect(SCREEN_WIDTH // 2 + 70, 260, 260, 92)
+    input_rect = pygame.Rect(180, 500, SCREEN_WIDTH - 520, 68)
+    connect_button = pygame.Rect(input_rect.right + 20, input_rect.y, 140, input_rect.height)
+    return host_button, join_button, connect_button, input_rect
 
 
 def draw_gameover(screen, title_font, body_font, mode, snake, max_length, classic_game):
@@ -1021,6 +1060,115 @@ def draw_duel_result(screen, title_font, body_font, winner):
     draw_text_centered(screen, body_font, "R 重新开始  M 返回主界面", HUD_TEXT_COLOR, SCREEN_HEIGHT // 2)
 
 
+def shutdown_multiplayer(multiplayer_server, multiplayer_client):
+    if multiplayer_client is not None:
+        if multiplayer_client.connected:
+            multiplayer_client.queue_message({"type": "disconnect"})
+            multiplayer_client.pump()
+        multiplayer_client.close()
+    if multiplayer_server is not None:
+        multiplayer_server.stop()
+
+
+def process_multiplayer_messages(multiplayer_client, multiplayer_scene, audio, setup_state):
+    if multiplayer_client is None or multiplayer_scene is None:
+        return False
+
+    for payload in multiplayer_client.pump():
+        payload_type = payload.get("type")
+        if payload_type == "snapshot":
+            multiplayer_scene.apply_snapshot(payload)
+        elif payload_type == "event":
+            local_player_id = multiplayer_scene.local_player_id or multiplayer_client.player_id
+            event_kind = payload.get("kind")
+            if event_kind == "eat" and payload.get("player_id") == local_player_id:
+                audio.play_eat()
+            elif event_kind == "guide" and payload.get("player_id") == local_player_id:
+                audio.play_guide()
+            elif event_kind == "death" and payload.get("player_id") == local_player_id:
+                audio.play_death()
+            elif event_kind == "bite" and payload.get("attacker_id") == local_player_id:
+                audio.play_death()
+            elif event_kind == "skill_used" and payload.get("player_id") == local_player_id:
+                if payload.get("skill") in ("grow", "harvest"):
+                    audio.play_eat()
+                else:
+                    audio.play_guide()
+            multiplayer_scene.apply_event(payload)
+        elif payload_type == "shutdown":
+            setup_state["status_message"] = payload.get("reason", "房间已关闭。")
+            return False
+        elif payload_type == "error":
+            setup_state["status_message"] = payload.get("message", "联机失败。")
+            return False
+
+    if not multiplayer_client.connected:
+        setup_state["status_message"] = multiplayer_client.last_error or "连接已断开。"
+        return False
+
+    return True
+
+
+def draw_multiplayer_scene(screen, multiplayer_scene, click_effects):
+    local_snake = multiplayer_scene.local_snake
+    if local_snake is None:
+        screen.fill(MENU_BG_COLOR)
+        return
+
+    draw_background(screen, multiplayer_scene.camera)
+    multiplayer_scene.world.draw(screen, multiplayer_scene.camera, multiplayer_scene.game_time)
+
+    if local_snake.segments:
+        draw_snake(screen, multiplayer_scene.camera, local_snake)
+
+    for player_id in multiplayer_scene.other_player_ids():
+        remote_snake = multiplayer_scene.snakes.get(player_id)
+        if remote_snake is not None and remote_snake.segments and multiplayer_scene.is_remote_snake_visible(player_id):
+            draw_snake(screen, multiplayer_scene.camera, remote_snake)
+
+    multiplayer_scene.fog.apply(screen)
+
+    for player_id in multiplayer_scene.other_player_ids():
+        remote_snake = multiplayer_scene.snakes.get(player_id)
+        if remote_snake is not None and remote_snake.segments and multiplayer_scene.is_remote_snake_visible(player_id):
+            _draw_snake_over_fog(screen, multiplayer_scene.camera, remote_snake)
+
+    for effect in click_effects:
+        effect.draw(screen, multiplayer_scene.camera)
+
+
+def draw_multiplayer_hud(screen, multiplayer_scene, font, small_font, title_font, sprite_bank):
+    local_snake = multiplayer_scene.local_snake
+    local_player = multiplayer_scene.players.get(multiplayer_scene.local_player_id or "")
+    if local_snake is None or local_player is None:
+        return
+
+    satiety = max(0.0, 100.0 - local_snake.hunger)
+    panel = pygame.Surface((HUD_WIDTH, HUD_HEIGHT), pygame.SRCALPHA)
+    panel.fill(HUD_PANEL_COLOR)
+    screen.blit(panel, (HUD_LEFT, HUD_TOP))
+    draw_satiety_bar(screen, HUD_LEFT + 18, HUD_TOP + 44, satiety)
+    screen.blit(font.render(f"{local_player.name} 饱腹度 {satiety:.0f}%", True, HUD_TEXT_COLOR), (HUD_LEFT + 18, HUD_TOP + 14))
+    screen.blit(font.render(f"长度 {local_snake.length}", True, HUD_TEXT_COLOR), (HUD_LEFT + 18, HUD_TOP + 72))
+    vis_text = f"视野 x{local_snake.vision_multiplier:.2f}"
+    screen.blit(small_font.render(vis_text, True, HUD_HINT_COLOR), (HUD_LEFT + 18, HUD_TOP + 102))
+
+    draw_multiplayer_score_panel(
+        screen,
+        small_font,
+        list(multiplayer_scene.players.values()),
+        multiplayer_scene.local_player_id,
+    )
+
+    if local_player.bite_dead and local_player.respawn_timer > 0:
+        _draw_death_overlay(screen, title_font, font, local_player.respawn_timer)
+
+    if local_player.held_skill is not None:
+        draw_held_skill(screen, local_player.held_skill, sprite_bank)
+
+    draw_multiplayer_status_text(screen, font, multiplayer_scene)
+
+
 def draw_adventure_scene(screen, camera, world, snake, fog, click_effects, game_time):
     draw_background(screen, camera)
     world.draw(screen, camera, game_time)
@@ -1048,7 +1196,7 @@ def main():
         pygame.key.stop_text_input()
     except AttributeError:
         pass
-    pygame.display.set_caption("贪吃蛇双模式")
+    pygame.display.set_caption("贪吃蛇多模式")
     clock = pygame.time.Clock()
 
     title_font, body_font, small_font, number_font = load_fonts()
@@ -1059,6 +1207,7 @@ def main():
     state = STATE_MENU
     active_mode = None
     paused_mode = None
+    paused_state = None
     camera = None
     snake = None
     ai_snake = None
@@ -1071,6 +1220,17 @@ def main():
     max_length = SNAKE_INITIAL_LENGTH
     game_time = 0.0
     duel_state = None
+    multiplayer_server = None
+    multiplayer_client = None
+    multiplayer_scene = None
+    multiplayer_setup = {
+        "hostname": get_hostname_name(),
+        "local_ips": get_local_ip_addresses(),
+        "join_address": f"127.0.0.1:{DEFAULT_MULTIPLAYER_PORT}",
+        "status_message": "",
+        "lobby_message": "",
+    }
+    multiplayer_text_input = False
     running = True
 
     while running:
@@ -1079,6 +1239,33 @@ def main():
             dt = 0.016
 
         events = pygame.event.get()
+
+        wants_text_input = state == STATE_MULTIPLAYER_SETUP
+        if wants_text_input != multiplayer_text_input:
+            try:
+                if wants_text_input:
+                    pygame.key.start_text_input()
+                else:
+                    pygame.key.stop_text_input()
+            except AttributeError:
+                pass
+            multiplayer_text_input = wants_text_input
+
+        should_pump_multiplayer = state in (
+            STATE_MULTIPLAYER_LOBBY,
+            STATE_MULTIPLAYER,
+            STATE_MULTIPLAYER_RESULT,
+        ) or (state == STATE_PAUSED and paused_mode == MODE_MULTIPLAYER)
+        if should_pump_multiplayer and multiplayer_client is not None and multiplayer_scene is not None:
+            if not process_multiplayer_messages(multiplayer_client, multiplayer_scene, audio, multiplayer_setup):
+                shutdown_multiplayer(multiplayer_server, multiplayer_client)
+                multiplayer_server = None
+                multiplayer_client = None
+                multiplayer_scene = None
+                click_effects = []
+                state = STATE_MULTIPLAYER_SETUP
+                active_mode = MODE_MULTIPLAYER
+                paused_state = None
 
         if state == STATE_MENU:
             buttons = get_menu_button_rects()
@@ -1100,6 +1287,11 @@ def main():
                         mode_state = start_mode(MODE_DUEL, sprite_bank)
                         (state, active_mode, camera, snake, ai_snake, input_handler, fog, world,
                          classic_game, held_skill, click_effects, max_length, game_time, duel_state) = _apply_mode_state(mode_state)
+                    elif action_pressed(event, "menu_multiplayer"):
+                        multiplayer_setup["status_message"] = ""
+                        multiplayer_setup["lobby_message"] = ""
+                        state = STATE_MULTIPLAYER_SETUP
+                        active_mode = MODE_MULTIPLAYER
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if buttons[MODE_CLASSIC].collidepoint(event.pos):
                         mode_state = start_mode(MODE_CLASSIC, sprite_bank)
@@ -1107,6 +1299,12 @@ def main():
                         mode_state = start_mode(MODE_ADVENTURE, sprite_bank)
                     elif buttons[MODE_DUEL].collidepoint(event.pos):
                         mode_state = start_mode(MODE_DUEL, sprite_bank)
+                    elif buttons[MODE_MULTIPLAYER].collidepoint(event.pos):
+                        multiplayer_setup["status_message"] = ""
+                        multiplayer_setup["lobby_message"] = ""
+                        mode_state = None
+                        state = STATE_MULTIPLAYER_SETUP
+                        active_mode = MODE_MULTIPLAYER
                     else:
                         mode_state = None
                     if mode_state is not None:
@@ -1114,15 +1312,190 @@ def main():
                          classic_game, held_skill, click_effects, max_length, game_time, duel_state) = _apply_mode_state(mode_state)
             draw_menu(screen, title_font, body_font, small_font, number_font)
 
+        elif state == STATE_MULTIPLAYER_SETUP:
+            host_button, join_button, connect_button, input_rect = get_multiplayer_setup_rects()
+            for event in events:
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN:
+                    if action_pressed(event, "quit"):
+                        running = False
+                    elif action_pressed(event, "menu"):
+                        state = STATE_MENU
+                        active_mode = None
+                        multiplayer_setup["lobby_message"] = ""
+                    elif event.key == pygame.K_BACKSPACE:
+                        multiplayer_setup["join_address"] = multiplayer_setup["join_address"][:-1]
+                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        try:
+                            host, port = parse_host_port(multiplayer_setup["join_address"])
+                            multiplayer_client = MultiplayerClient()
+                            multiplayer_scene = MultiplayerSceneState(sprite_bank)
+                            multiplayer_client.connect(host, port, multiplayer_setup["hostname"])
+                            input_handler = InputHandler()
+                            click_effects = []
+                            multiplayer_setup["status_message"] = f"正在连接 {host}:{port} ..."
+                            multiplayer_setup["lobby_message"] = ""
+                            state = STATE_MULTIPLAYER_LOBBY
+                        except Exception as exc:
+                            if multiplayer_client is not None:
+                                multiplayer_client.close()
+                            multiplayer_client = None
+                            multiplayer_scene = None
+                            multiplayer_setup["status_message"] = f"连接失败: {exc}"
+                elif event.type == pygame.TEXTINPUT:
+                    if len(multiplayer_setup["join_address"]) < 64:
+                        multiplayer_setup["join_address"] += event.text
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if host_button.collidepoint(event.pos):
+                        try:
+                            multiplayer_setup["status_message"] = "正在创建房间..."
+                            multiplayer_server = MultiplayerServer(port=DEFAULT_MULTIPLAYER_PORT)
+                            multiplayer_server.start()
+                            multiplayer_client = MultiplayerClient()
+                            multiplayer_scene = MultiplayerSceneState(sprite_bank)
+                            multiplayer_client.connect("127.0.0.1", multiplayer_server.bound_port, multiplayer_setup["hostname"])
+                            input_handler = InputHandler()
+                            click_effects = []
+                            multiplayer_setup["status_message"] = f"房间已创建，端口 {multiplayer_server.bound_port}"
+                            multiplayer_setup["lobby_message"] = ""
+                            state = STATE_MULTIPLAYER_LOBBY
+                        except Exception as exc:
+                            shutdown_multiplayer(multiplayer_server, multiplayer_client)
+                            multiplayer_server = None
+                            multiplayer_client = None
+                            multiplayer_scene = None
+                            multiplayer_setup["status_message"] = f"创建失败: {exc}"
+                    elif join_button.collidepoint(event.pos):
+                        multiplayer_setup["status_message"] = "请输入房主地址后点击连接。"
+                    elif connect_button.collidepoint(event.pos):
+                        try:
+                            host, port = parse_host_port(multiplayer_setup["join_address"])
+                            multiplayer_client = MultiplayerClient()
+                            multiplayer_scene = MultiplayerSceneState(sprite_bank)
+                            multiplayer_client.connect(host, port, multiplayer_setup["hostname"])
+                            input_handler = InputHandler()
+                            click_effects = []
+                            multiplayer_setup["status_message"] = f"正在连接 {host}:{port} ..."
+                            multiplayer_setup["lobby_message"] = ""
+                            state = STATE_MULTIPLAYER_LOBBY
+                        except Exception as exc:
+                            if multiplayer_client is not None:
+                                multiplayer_client.close()
+                            multiplayer_client = None
+                            multiplayer_scene = None
+                            multiplayer_setup["status_message"] = f"连接失败: {exc}"
+
+            draw_multiplayer_setup(
+                screen,
+                title_font,
+                body_font,
+                small_font,
+                multiplayer_setup,
+                host_button,
+                join_button,
+                connect_button,
+                input_rect,
+            )
+
+        elif state == STATE_MULTIPLAYER_LOBBY:
+            if multiplayer_scene is not None and multiplayer_scene.phase == "playing":
+                state = STATE_MULTIPLAYER
+            else:
+                for event in events:
+                    if event.type == pygame.QUIT:
+                        running = False
+                    elif event.type == pygame.KEYDOWN:
+                        if action_pressed(event, "quit"):
+                            running = False
+                        elif action_pressed(event, "pause"):
+                            paused_mode = MODE_MULTIPLAYER
+                            paused_state = STATE_MULTIPLAYER_LOBBY
+                            state = STATE_PAUSED
+                        elif action_pressed(event, "menu"):
+                            shutdown_multiplayer(multiplayer_server, multiplayer_client)
+                            multiplayer_server = None
+                            multiplayer_client = None
+                            multiplayer_scene = None
+                            click_effects = []
+                            state = STATE_MENU
+                            active_mode = None
+                            multiplayer_setup["lobby_message"] = ""
+                        elif action_pressed(event, "activate_skill") and multiplayer_client is not None:
+                            multiplayer_client.queue_message({"type": "toggle_ready"})
+                            multiplayer_setup["lobby_message"] = "已发送准备状态切换。"
+                        elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                            if multiplayer_client is not None and multiplayer_client.is_host and multiplayer_scene is not None:
+                                connected_players = [player for player in multiplayer_scene.players.values() if player.connected]
+                                if len(connected_players) < 2:
+                                    multiplayer_setup["lobby_message"] = "至少需要 2 名已连接玩家才能开始。"
+                                elif not all(player.ready_in_lobby for player in connected_players):
+                                    multiplayer_setup["lobby_message"] = "还有玩家未准备，无法开始。"
+                                else:
+                                    multiplayer_client.queue_message({"type": "start_match"})
+                                    multiplayer_setup["lobby_message"] = "房主已发起开局。"
+
+                draw_multiplayer_lobby(
+                    screen,
+                    title_font,
+                    body_font,
+                    small_font,
+                    multiplayer_scene,
+                    multiplayer_setup["hostname"],
+                    multiplayer_setup["local_ips"],
+                    multiplayer_setup["lobby_message"],
+                )
+
+        elif state == STATE_MULTIPLAYER:
+            if multiplayer_scene is not None and multiplayer_scene.phase == "result":
+                state = STATE_MULTIPLAYER_RESULT
+            else:
+                actions = input_handler.handle_events(events, multiplayer_scene.camera)
+                if actions.quit:
+                    running = False
+                elif actions.pause_requested:
+                    paused_mode = MODE_MULTIPLAYER
+                    paused_state = STATE_MULTIPLAYER
+                    state = STATE_PAUSED
+                elif actions.back_to_menu:
+                    shutdown_multiplayer(multiplayer_server, multiplayer_client)
+                    multiplayer_server = None
+                    multiplayer_client = None
+                    multiplayer_scene = None
+                    click_effects = []
+                    state = STATE_MENU
+                    active_mode = None
+                    paused_state = None
+                else:
+                    if actions.target_point is not None and multiplayer_client is not None:
+                        multiplayer_client.queue_message(
+                            {
+                                "type": "input",
+                                "target": [actions.target_point[0], actions.target_point[1]],
+                            }
+                        )
+                        click_effects.append(ClickEffect(*actions.click_world))
+
+                    if actions.activate_skill and multiplayer_client is not None:
+                        multiplayer_client.queue_message({"type": "activate_skill"})
+
+                    multiplayer_scene.tick(dt)
+                    click_effects = [effect for effect in click_effects if effect.update(dt)]
+
+            draw_multiplayer_scene(screen, multiplayer_scene, click_effects)
+            draw_multiplayer_hud(screen, multiplayer_scene, body_font, small_font, title_font, sprite_bank)
+
         elif state == STATE_ADVENTURE:
             actions = input_handler.handle_events(events, camera)
             if actions.quit:
                 running = False
             elif actions.pause_requested:
                 paused_mode = MODE_ADVENTURE
+                paused_state = STATE_ADVENTURE
                 state = STATE_PAUSED
             elif actions.back_to_menu:
                 state = STATE_MENU
+                paused_state = None
             else:
                 if actions.restart:
                     mode_state = start_mode(MODE_ADVENTURE, sprite_bank)
@@ -1161,6 +1534,7 @@ def main():
                         running = False
                     elif action_pressed(event, "pause"):
                         paused_mode = MODE_CLASSIC
+                        paused_state = STATE_CLASSIC
                         state = STATE_PAUSED
                     elif action_pressed(event, "restart"):
                         classic_game.reset()
@@ -1181,6 +1555,7 @@ def main():
                 running = False
             elif actions.pause_requested:
                 paused_mode = MODE_DUEL
+                paused_state = STATE_DUEL
                 state = STATE_PAUSED
             elif actions.back_to_menu:
                 best_ai_idx = max(range(len(ai_snake)), key=lambda i: ai_snake[i].length)
@@ -1254,10 +1629,36 @@ def main():
             elif paused_mode == MODE_DUEL:
                 draw_duel_scene(screen, camera, world, snake, ai_snake, fog, click_effects, game_time, duel_state)
                 draw_duel_hud(screen, snake, ai_snake, body_font, small_font, title_font, duel_state, held_skill, sprite_bank)
+            elif paused_mode == MODE_MULTIPLAYER:
+                if paused_state == STATE_MULTIPLAYER_LOBBY:
+                    draw_multiplayer_lobby(
+                        screen,
+                        title_font,
+                        body_font,
+                        small_font,
+                        multiplayer_scene,
+                        multiplayer_setup["hostname"],
+                        multiplayer_setup["local_ips"],
+                        multiplayer_setup["lobby_message"],
+                    )
+                elif paused_state == STATE_MULTIPLAYER_RESULT:
+                    multiplayer_scene.tick(dt)
+                    click_effects = [effect for effect in click_effects if effect.update(dt)]
+                    draw_multiplayer_scene(screen, multiplayer_scene, click_effects)
+                    draw_multiplayer_hud(screen, multiplayer_scene, body_font, small_font, title_font, sprite_bank)
+                    draw_multiplayer_result(screen, title_font, body_font, multiplayer_scene.winner_name)
+                else:
+                    multiplayer_scene.tick(dt)
+                    click_effects = [effect for effect in click_effects if effect.update(dt)]
+                    draw_multiplayer_scene(screen, multiplayer_scene, click_effects)
+                    draw_multiplayer_hud(screen, multiplayer_scene, body_font, small_font, title_font, sprite_bank)
             else:
                 classic_game.draw(screen, body_font, small_font)
 
-            draw_pause_overlay(screen, title_font, body_font, small_font)
+            if paused_mode == MODE_MULTIPLAYER:
+                draw_multiplayer_pause_overlay(screen, title_font, body_font, small_font)
+            else:
+                draw_pause_overlay(screen, title_font, body_font, small_font)
 
             for event in events:
                 if event.type == pygame.QUIT:
@@ -1268,10 +1669,22 @@ def main():
                             state = STATE_ADVENTURE
                         elif paused_mode == MODE_DUEL:
                             state = STATE_DUEL
+                        elif paused_mode == MODE_MULTIPLAYER:
+                            state = paused_state or STATE_MULTIPLAYER
+                            paused_state = None
                         else:
                             state = STATE_CLASSIC
                     elif action_pressed(event, "menu"):
-                        if paused_mode == MODE_DUEL and duel_state is not None:
+                        if paused_mode == MODE_MULTIPLAYER:
+                            shutdown_multiplayer(multiplayer_server, multiplayer_client)
+                            multiplayer_server = None
+                            multiplayer_client = None
+                            multiplayer_scene = None
+                            click_effects = []
+                            state = STATE_MENU
+                            active_mode = None
+                            paused_state = None
+                        elif paused_mode == MODE_DUEL and duel_state is not None:
                             best_ai_idx = max(range(len(ai_snake)), key=lambda i: ai_snake[i].length) if ai_snake else 0
                             best_ai_len = ai_snake[best_ai_idx].length if ai_snake else 0
                             if snake.length > best_ai_len:
@@ -1287,12 +1700,17 @@ def main():
                     elif action_pressed(event, "quit"):
                         running = False
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if paused_mode == MODE_MULTIPLAYER:
+                        continue
                     buttons = get_pause_button_rects()
                     if buttons["resume"].collidepoint(event.pos):
                         if paused_mode == MODE_ADVENTURE:
                             state = STATE_ADVENTURE
                         elif paused_mode == MODE_DUEL:
                             state = STATE_DUEL
+                        elif paused_mode == MODE_MULTIPLAYER:
+                            state = paused_state or STATE_MULTIPLAYER
+                            paused_state = None
                         else:
                             state = STATE_CLASSIC
                     elif buttons["menu"].collidepoint(event.pos):
@@ -1311,6 +1729,40 @@ def main():
                             state = STATE_MENU
                     elif buttons["quit"].collidepoint(event.pos):
                         running = False
+
+        elif state == STATE_MULTIPLAYER_RESULT:
+            if multiplayer_scene is not None and multiplayer_scene.phase == "playing":
+                state = STATE_MULTIPLAYER
+            else:
+                if multiplayer_scene is not None:
+                    multiplayer_scene.tick(dt)
+                    click_effects = [effect for effect in click_effects if effect.update(dt)]
+                    draw_multiplayer_scene(screen, multiplayer_scene, click_effects)
+                    draw_multiplayer_hud(screen, multiplayer_scene, body_font, small_font, title_font, sprite_bank)
+                    draw_multiplayer_result(screen, title_font, body_font, multiplayer_scene.winner_name)
+
+                for event in events:
+                    if event.type == pygame.QUIT:
+                        running = False
+                    elif event.type == pygame.KEYDOWN:
+                        if action_pressed(event, "quit"):
+                            running = False
+                        elif action_pressed(event, "pause"):
+                            paused_mode = MODE_MULTIPLAYER
+                            paused_state = STATE_MULTIPLAYER_RESULT
+                            state = STATE_PAUSED
+                        elif action_pressed(event, "restart"):
+                            if multiplayer_client is not None and multiplayer_client.is_host:
+                                multiplayer_client.queue_message({"type": "restart_match"})
+                        elif action_pressed(event, "menu"):
+                            shutdown_multiplayer(multiplayer_server, multiplayer_client)
+                            multiplayer_server = None
+                            multiplayer_client = None
+                            multiplayer_scene = None
+                            click_effects = []
+                            state = STATE_MENU
+                            active_mode = None
+                            paused_state = None
 
         elif state == STATE_GAMEOVER:
             if active_mode == MODE_ADVENTURE:
@@ -1357,6 +1809,7 @@ def main():
 
         pygame.display.flip()
 
+    shutdown_multiplayer(multiplayer_server, multiplayer_client)
     pygame.quit()
     sys.exit()
 

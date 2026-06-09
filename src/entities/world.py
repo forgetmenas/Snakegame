@@ -147,7 +147,7 @@ class AdventureObstacle:
 class World:
     """Tracks prey, beasts, guides, and adventure mode skill cards."""
 
-    def __init__(self, snake_ref, sprite_bank, other_snakes=None, config=None):
+    def __init__(self, snake_ref, sprite_bank, other_snakes=None, config=None, *, populate=True):
         self.snake = snake_ref
         self.snakes = [snake_ref]
         if other_snakes:
@@ -171,7 +171,8 @@ class World:
         self._obstacle_lifetime = cfg.get("obstacle_lifetime", ADVENTURE_OBSTACLE_LIFETIME)
         self._obstacle_interval = cfg.get("obstacle_interval", ADVENTURE_OBSTACLE_SPAWN_INTERVAL)
 
-        self._spawn_initial()
+        if populate:
+            self._spawn_initial()
 
     def _spawn_initial(self):
         for _ in range(INITIAL_BEAST_COUNT):
